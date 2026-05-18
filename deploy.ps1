@@ -7,14 +7,27 @@ function Write-Warn { param($msg) Write-Host "⚠  $msg"  -ForegroundColor Yello
 
 Write-Step "Patching vite.config.ts..."
 $original = Get-Content $ViteConfig -Raw
+
 if ($original -notmatch "manualChunks") {
-    $patch = $original -replace '(?s)(export default defineConfig\(\{)', "`$1`n  build: {`n    chunkSizeWarningLimit: 600,`n    rollupOptions: { output: { manualChunks: { 'pdf-libs': ['jspdf','html2canvas'], 'vendor': ['react','react-dom'] } } },`n  },"
+    $chunkFn = @"
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('jspdf') || id.includes('html2canvas')) return 'pdf-libs';
+          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) return 'vendor';
+          if (id.includes('dompurify')) return 'dompurify';
+        },
+      },
+    },
+    chunkSizeWarningLimit: 600,
+"@
+    $patch = $original -replace '(?s)(export default defineConfig\(\{)', "`$1`n  build: {`n$chunkFn`n  },"
     if ($patch -ne $original) { Set-Content $ViteConfig $patch -Encoding UTF8; Write-OK "Patched." }
     else { Write-Warn "Could not auto-patch - add manualChunks manually." }
 } else { Write-OK "Already patched - skipping." }
 
 Write-Step "Installing dependencies..."
-npm install
+npm install --legacy-peer-deps
 Write-OK "Done."
 
 Write-Step "Building web app..."
