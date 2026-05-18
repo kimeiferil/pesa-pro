@@ -1,501 +1,573 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, Check, X, Loader } from 'lucide-react';
-import { supabase } from '../lib/supabase';
-import type { AppVersion } from '../services/updateService';
+import React, { useEffect, useState, useCallback } from 'react';
+import {
+  Package, Plus, Trash2, Edit3, Check, X,
+  AlertTriangle, Calendar, Download, RefreshCw,
+  ChevronDown, ChevronUp, ExternalLink,
+} from 'lucide-react';
+import { updateService, type AppVersion, type CreateVersionPayload } from '../services/updateService';
 
-interface FormData {
-  version: string;
-  changelog: string;
-  is_required: boolean;
-  download_url?: string;
+const APP_VERSION = '1.0.0'; // Keep in sync with App.tsx
+
+// ── helpers ────────────────────────────────────────────────────────────────
+const isNewer = (a: string, b: string) =>
+  a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }) > 0;
+
+const fmt = (iso: string) =>
+  new Date(iso).toLocaleDateString('en-KE', {
+    year: 'numeric', month: 'short', day: 'numeric',
+  });
+
+const EMPTY_FORM: CreateVersionPayload = {
+  version: '',
+  is_required: false,
+  changelog: '',
+  download_url: '',
+  release_date: new Date().toISOString().split('T')[0],
+};
+
+// ── VersionForm ─────────────────────────────────────────────────────────────
+interface VersionFormProps {
+  initial?: Partial<CreateVersionPayload>;
+  onSave: (payload: CreateVersionPayload) => Promise<void>;
+  onCancel: () => void;
+  saving: boolean;
 }
 
-export const VersionManagementPanel: React.FC = () => {
-  const [versions, setVersions] = useState<AppVersion[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<FormData>({
-    version: '',
-    changelog: '',
-    is_required: false,
-    download_url: '',
+function VersionForm({ initial, onSave, onCancel, saving }: VersionFormProps) {
+  const [form, setForm] = useState<CreateVersionPayload>({
+    ...EMPTY_FORM,
+    ...initial,
+    download_url: initial?.download_url ?? '',
   });
-  const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  // Fetch versions
-  const fetchVersions = async () => {
-    setIsLoading(true);
+  const set = (k: keyof CreateVersionPayload, v: string | boolean) =>
+    setForm(f => ({ ...f, [k]: v }));
+
+  const submit = async () => {
+    if (!form.version.trim()) { setErr('Version is required'); return; }
+    if (!/^\d+\.\d+\.\d+/.test(form.version.trim())) {
+      setErr('Use semver format: 1.2.3'); return;
+    }
+    setErr(null);
     try {
-      const { data, error: err } = await supabase
-        .from('app_versions')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (err) throw err;
-      setVersions(data as AppVersion[]);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch versions';
-      setError(message);
-    } finally {
-      setIsLoading(false);
+      await onSave({
+        ...form,
+        version: form.version.trim(),
+        download_url: form.download_url?.trim() || null,
+      });
+    } catch (e: any) {
+      setErr(e.message ?? 'Save failed');
     }
-  };
-
-  useEffect(() => {
-    fetchVersions();
-  }, []);
-
-  // Handle form submit
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSuccess(false);
-
-    if (!formData.version || !formData.changelog) {
-      setError('Version and changelog are required');
-      return;
-    }
-
-    setIsSaving(true);
-    try {
-      if (editingId) {
-        // Update existing version
-        const { error: err } = await supabase
-          .from('app_versions')
-          .update({
-            changelog: formData.changelog,
-            is_required: formData.is_required,
-            download_url: formData.download_url || null,
-          })
-          .eq('id', editingId);
-
-        if (err) throw err;
-      } else {
-        // Create new version
-        const { error: err } = await supabase
-          .from('app_versions')
-          .insert([
-            {
-              version: formData.version,
-              changelog: formData.changelog,
-              is_required: formData.is_required,
-              download_url: formData.download_url || null,
-            },
-          ]);
-
-        if (err) throw err;
-      }
-
-      setSuccess(true);
-      setFormData({ version: '', changelog: '', is_required: false, download_url: '' });
-      setEditingId(null);
-      setShowForm(false);
-      fetchVersions();
-
-      // Clear success message after 3 seconds
-      setTimeout(() => setSuccess(false), 3000);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save version';
-      setError(message);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  // Handle edit
-  const handleEdit = (version: AppVersion) => {
-    setFormData({
-      version: version.version,
-      changelog: version.changelog,
-      is_required: version.is_required,
-      download_url: version.download_url || '',
-    });
-    setEditingId(version.id);
-    setShowForm(true);
-  };
-
-  // Handle delete
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this version?')) return;
-
-    try {
-      const { error: err } = await supabase
-        .from('app_versions')
-        .delete()
-        .eq('id', id);
-
-      if (err) throw err;
-      fetchVersions();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete version';
-      setError(message);
-    }
-  };
-
-  // Handle cancel
-  const handleCancel = () => {
-    setShowForm(false);
-    setEditingId(null);
-    setFormData({ version: '', changelog: '', is_required: false, download_url: '' });
-    setError(null);
   };
 
   return (
-    <div style={{ padding: 20 }}>
-      <h2 style={{ fontSize: 20, fontWeight: 700, color: '#f1f5f9', marginBottom: 20 }}>
-        Version Management
-      </h2>
+    <div style={S.formWrap}>
+      <div style={S.formRow}>
+        <label style={S.label}>Version *</label>
+        <input
+          style={S.input}
+          placeholder="e.g. 1.0.1"
+          value={form.version}
+          onChange={e => set('version', e.target.value)}
+        />
+      </div>
 
-      {/* Add Version Button */}
-      {!showForm && (
-        <button
-          onClick={() => setShowForm(true)}
-          style={{
-            padding: '10px 16px',
-            background: 'linear-gradient(135deg, #10b981, #059669)',
-            border: 'none',
-            borderRadius: 8,
-            color: '#fff',
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            marginBottom: 20,
-            transition: 'opacity 0.2s',
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.9'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
-        >
-          <Plus size={16} />
-          Add New Version
+      <div style={S.formRow}>
+        <label style={S.label}>Release Date *</label>
+        <input
+          type="date"
+          style={S.input}
+          value={form.release_date.split('T')[0]}
+          onChange={e => set('release_date', e.target.value)}
+        />
+      </div>
+
+      <div style={S.formRow}>
+        <label style={S.label}>Changelog</label>
+        <textarea
+          style={{ ...S.input, minHeight: 100, resize: 'vertical' }}
+          placeholder="• What changed in this version"
+          value={form.changelog}
+          onChange={e => set('changelog', e.target.value)}
+        />
+      </div>
+
+      <div style={S.formRow}>
+        <label style={S.label}>Download URL</label>
+        <input
+          style={S.input}
+          placeholder="https://... (APK or Play Store link)"
+          value={form.download_url ?? ''}
+          onChange={e => set('download_url', e.target.value)}
+        />
+      </div>
+
+      <div style={{ ...S.formRow, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <input
+          type="checkbox"
+          id="is_required"
+          checked={form.is_required}
+          onChange={e => set('is_required', e.target.checked)}
+          style={{ width: 16, height: 16, accentColor: '#ef4444' }}
+        />
+        <label htmlFor="is_required" style={{ ...S.label, color: '#ef4444', margin: 0, cursor: 'pointer' }}>
+          Force update (users must update before continuing)
+        </label>
+      </div>
+
+      {err && (
+        <div style={S.errBanner}>
+          <AlertTriangle size={14} /> {err}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+        <button style={S.btnPrimary} onClick={submit} disabled={saving}>
+          {saving ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={14} />}
+          {saving ? 'Saving…' : 'Save Version'}
         </button>
-      )}
+        <button style={S.btnGhost} onClick={onCancel} disabled={saving}>
+          <X size={14} /> Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
 
-      {/* Form */}
-      {showForm && (
-        <form
-          onSubmit={handleSubmit}
-          style={{
-            background: 'rgba(255, 255, 255, 0.03)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
-            borderRadius: 12,
-            padding: 20,
-            marginBottom: 20,
-          }}
-        >
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 6 }}>
-              Version Number
-            </label>
-            <input
-              type="text"
-              placeholder="e.g., 1.0.1"
-              value={formData.version}
-              onChange={(e) => setFormData({ ...formData, version: e.target.value })}
-              disabled={!!editingId}
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                borderRadius: 8,
-                color: '#f1f5f9',
-                fontSize: 14,
-                outline: 'none',
-                boxSizing: 'border-box',
-                opacity: editingId ? 0.6 : 1,
-                fontFamily: 'inherit',
-              }}
-            />
+// ── VersionRow ───────────────────────────────────────────────────────────────
+interface VersionRowProps {
+  version: AppVersion;
+  isCurrent: boolean;
+  isLatest: boolean;
+  onEdit: (v: AppVersion) => void;
+  onDelete: (id: string) => void;
+}
+
+function VersionRow({ version: v, isCurrent, isLatest, onEdit, onDelete }: VersionRowProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  return (
+    <div style={{
+      ...S.versionCard,
+      borderColor: isLatest
+        ? 'rgba(16,185,129,0.4)'
+        : isCurrent
+        ? 'rgba(59,130,246,0.3)'
+        : 'rgba(255,255,255,0.08)',
+      background: isLatest
+        ? 'rgba(16,185,129,0.06)'
+        : 'rgba(255,255,255,0.03)',
+    }}>
+      {/* Top row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ ...S.versionIcon, background: isLatest ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.06)' }}>
+          <Package size={16} style={{ color: isLatest ? '#10b981' : '#64748b' }} />
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 15, fontWeight: 700, color: '#f1f5f9' }}>
+              v{v.version}
+            </span>
+            {isLatest && (
+              <span style={S.badge('#10b981')}>LATEST</span>
+            )}
+            {isCurrent && (
+              <span style={S.badge('#3b82f6')}>RUNNING</span>
+            )}
+            {v.is_required && (
+              <span style={S.badge('#ef4444')}>REQUIRED</span>
+            )}
           </div>
-
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 6 }}>
-              Changelog
-            </label>
-            <textarea
-              placeholder="Describe the changes in this version..."
-              value={formData.changelog}
-              onChange={(e) => setFormData({ ...formData, changelog: e.target.value })}
-              rows={6}
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                borderRadius: 8,
-                color: '#f1f5f9',
-                fontSize: 14,
-                outline: 'none',
-                boxSizing: 'border-box',
-                fontFamily: 'inherit',
-                resize: 'vertical',
-              }}
-            />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
+            <Calendar size={11} style={{ color: '#64748b' }} />
+            <span style={{ fontSize: 11, color: '#64748b' }}>{fmt(v.release_date)}</span>
           </div>
+        </div>
 
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 6 }}>
-              Download URL (optional)
-            </label>
-            <input
-              type="url"
-              placeholder="https://example.com/app.apk"
-              value={formData.download_url}
-              onChange={(e) => setFormData({ ...formData, download_url: e.target.value })}
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                borderRadius: 8,
-                color: '#f1f5f9',
-                fontSize: 14,
-                outline: 'none',
-                boxSizing: 'border-box',
-                fontFamily: 'inherit',
-              }}
-            />
-          </div>
-
-          <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input
-              type="checkbox"
-              id="is_required"
-              checked={formData.is_required}
-              onChange={(e) => setFormData({ ...formData, is_required: e.target.checked })}
-              style={{ cursor: 'pointer' }}
-            />
-            <label htmlFor="is_required" style={{ fontSize: 14, color: '#cbd5e1', cursor: 'pointer' }}>
-              Mark as required update
-            </label>
-          </div>
-
-          {error && (
-            <div
-              style={{
-                background: 'rgba(239, 68, 68, 0.1)',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
-                borderRadius: 8,
-                padding: 12,
-                marginBottom: 16,
-                color: '#fca5a5',
-                fontSize: 12,
-              }}
+        {/* Actions */}
+        <div style={{ display: 'flex', gap: 6 }}>
+          {v.download_url && (
+            <a
+              href={v.download_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={S.iconBtn}
+              title="Open download URL"
             >
-              {error}
-            </div>
+              <ExternalLink size={14} />
+            </a>
           )}
-
-          {success && (
-            <div
-              style={{
-                background: 'rgba(16, 185, 129, 0.1)',
-                border: '1px solid rgba(16, 185, 129, 0.3)',
-                borderRadius: 8,
-                padding: 12,
-                marginBottom: 16,
-                color: '#a7f3d0',
-                fontSize: 12,
-              }}
-            >
-              Version saved successfully!
-            </div>
+          <button style={S.iconBtn} onClick={() => onEdit(v)} title="Edit">
+            <Edit3 size={14} />
+          </button>
+          {!confirmDelete ? (
+            <button style={{ ...S.iconBtn, color: '#f87171' }} onClick={() => setConfirmDelete(true)} title="Delete">
+              <Trash2 size={14} />
+            </button>
+          ) : (
+            <>
+              <button
+                style={{ ...S.iconBtn, color: '#ef4444', background: 'rgba(239,68,68,0.15)' }}
+                onClick={() => onDelete(v.id)}
+                title="Confirm delete"
+              >
+                <Check size={14} />
+              </button>
+              <button style={S.iconBtn} onClick={() => setConfirmDelete(false)} title="Cancel">
+                <X size={14} />
+              </button>
+            </>
           )}
+          <button
+            style={S.iconBtn}
+            onClick={() => setExpanded(e => !e)}
+            title="Toggle changelog"
+          >
+            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+        </div>
+      </div>
 
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              type="submit"
-              disabled={isSaving}
-              style={{
-                padding: '10px 16px',
-                background: 'linear-gradient(135deg, #10b981, #059669)',
-                border: 'none',
-                borderRadius: 8,
-                color: '#fff',
-                fontSize: 14,
-                fontWeight: 600,
-                cursor: isSaving ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                opacity: isSaving ? 0.6 : 1,
-                transition: 'opacity 0.2s',
-                fontFamily: 'inherit',
-              }}
-            >
-              {isSaving ? <Loader size={16} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={16} />}
-              {isSaving ? 'Saving...' : 'Save'}
-            </button>
-            <button
-              type="button"
-              onClick={handleCancel}
-              style={{
-                padding: '10px 16px',
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                borderRadius: 8,
-                color: '#cbd5e1',
-                fontSize: 14,
-                fontWeight: 600,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                transition: 'all 0.2s',
-                fontFamily: 'inherit',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
-                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
-              }}
-            >
-              <X size={16} />
-              Cancel
-            </button>
-          </div>
-        </form>
+      {/* Changelog */}
+      {expanded && v.changelog && (
+        <pre style={S.changelog}>{v.changelog}</pre>
       )}
-
-      {/* Version List */}
-      {isLoading ? (
-        <div style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b' }}>
-          <div style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>
-            <Loader size={32} />
-          </div>
-          <p style={{ marginTop: 12 }}>Loading versions...</p>
-        </div>
-      ) : versions.length === 0 ? (
-        <div
-          style={{
-            background: 'rgba(255, 255, 255, 0.03)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
-            borderRadius: 12,
-            padding: 32,
-            textAlign: 'center',
-            color: '#64748b',
-          }}
-        >
-          <p>No versions found</p>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {versions.map((version) => (
-            <div
-              key={version.id}
-              style={{
-                background: 'rgba(255, 255, 255, 0.03)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                borderRadius: 12,
-                padding: 16,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-              }}
-            >
-              <div style={{ flex: 1 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  <span style={{ fontSize: 14, fontWeight: 600, color: '#f1f5f9' }}>
-                    v{version.version}
-                  </span>
-                  {version.is_required && (
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 600,
-                        color: '#fff',
-                        background: '#f59e0b',
-                        padding: '2px 8px',
-                        borderRadius: 4,
-                        textTransform: 'uppercase',
-                      }}
-                    >
-                      Required
-                    </span>
-                  )}
-                </div>
-                <p style={{ fontSize: 12, color: '#64748b', margin: 0, marginBottom: 4 }}>
-                  Released: {new Date(version.release_date).toLocaleDateString()}
-                </p>
-                <p style={{ fontSize: 12, color: '#cbd5e1', margin: 0, maxHeight: 40, overflow: 'hidden', whiteSpace: 'pre-wrap' }}>
-                  {version.changelog}
-                </p>
-              </div>
-              <div style={{ display: 'flex', gap: 8, marginLeft: 16 }}>
-                <button
-                  onClick={() => handleEdit(version)}
-                  style={{
-                    background: 'rgba(59, 130, 246, 0.1)',
-                    border: '1px solid rgba(59, 130, 246, 0.3)',
-                    borderRadius: 8,
-                    color: '#60a5fa',
-                    cursor: 'pointer',
-                    padding: '8px 12px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    transition: 'all 0.2s',
-                    fontFamily: 'inherit',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'rgba(59, 130, 246, 0.2)';
-                    e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.5)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'rgba(59, 130, 246, 0.1)';
-                    e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.3)';
-                  }}
-                >
-                  <Edit size={14} />
-                  Edit
-                </button>
-                <button
-                  onClick={() => handleDelete(version.id)}
-                  style={{
-                    background: 'rgba(239, 68, 68, 0.1)',
-                    border: '1px solid rgba(239, 68, 68, 0.3)',
-                    borderRadius: 8,
-                    color: '#f87171',
-                    cursor: 'pointer',
-                    padding: '8px 12px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    transition: 'all 0.2s',
-                    fontFamily: 'inherit',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)';
-                    e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.5)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)';
-                    e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.3)';
-                  }}
-                >
-                  <Trash2 size={14} />
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+      {expanded && !v.changelog && (
+        <p style={{ fontSize: 12, color: '#475569', marginTop: 10, fontStyle: 'italic' }}>
+          No changelog provided.
+        </p>
       )}
     </div>
   );
-};
+}
 
-export default VersionManagementPanel;
+// ── Main Component ───────────────────────────────────────────────────────────
+export function VersionManagementPanel() {
+  const [versions,     setVersions    ] = useState<AppVersion[]>([]);
+  const [loading,      setLoading     ] = useState(true);
+  const [saving,       setSaving      ] = useState(false);
+  const [error,        setError       ] = useState<string | null>(null);
+  const [showForm,     setShowForm    ] = useState(false);
+  const [editTarget,   setEditTarget  ] = useState<AppVersion | null>(null);
+
+  const latest = versions[0] ?? null;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await updateService.getVersionHistory();
+      setVersions(data);
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to load versions');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleCreate = async (payload: CreateVersionPayload) => {
+    setSaving(true);
+    try {
+      await updateService.createVersion(payload);
+      setShowForm(false);
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUpdate = async (payload: CreateVersionPayload) => {
+    if (!editTarget) return;
+    setSaving(true);
+    try {
+      await updateService.updateVersion(editTarget.id, payload);
+      setEditTarget(null);
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await updateService.deleteVersion(id);
+      await load();
+    } catch (e: any) {
+      setError(e.message ?? 'Delete failed');
+    }
+  };
+
+  return (
+    <div style={S.panel}>
+      {/* Header */}
+      <div style={S.panelHeader}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={S.panelIcon}>
+            <Package size={20} style={{ color: '#10b981' }} />
+          </div>
+          <div>
+            <h2 style={S.panelTitle}>Version Management</h2>
+            <p style={S.panelSub}>
+              Running <strong style={{ color: '#f1f5f9' }}>v{APP_VERSION}</strong>
+              {latest && isNewer(latest.version, APP_VERSION) && (
+                <span style={{ color: '#f59e0b', marginLeft: 8 }}>
+                  ↑ v{latest.version} available
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={S.btnGhost} onClick={load} disabled={loading} title="Refresh">
+            <RefreshCw size={14} style={loading ? { animation: 'spin 1s linear infinite' } : {}} />
+            Refresh
+          </button>
+          <button
+            style={S.btnPrimary}
+            onClick={() => { setShowForm(true); setEditTarget(null); }}
+            disabled={showForm}
+          >
+            <Plus size={14} /> New Version
+          </button>
+        </div>
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div style={S.errBanner}>
+          <AlertTriangle size={14} /> {error}
+          <button style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#f87171', cursor: 'pointer' }}
+            onClick={() => setError(null)}>
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
+      {/* Create Form */}
+      {showForm && !editTarget && (
+        <div style={S.formSection}>
+          <p style={S.formSectionLabel}>New Release</p>
+          <VersionForm
+            onSave={handleCreate}
+            onCancel={() => setShowForm(false)}
+            saving={saving}
+          />
+        </div>
+      )}
+
+      {/* Edit Form */}
+      {editTarget && (
+        <div style={S.formSection}>
+          <p style={S.formSectionLabel}>Edit v{editTarget.version}</p>
+          <VersionForm
+            initial={{
+              version:      editTarget.version,
+              is_required:  editTarget.is_required,
+              changelog:    editTarget.changelog,
+              download_url: editTarget.download_url ?? '',
+              release_date: editTarget.release_date.split('T')[0],
+            }}
+            onSave={handleUpdate}
+            onCancel={() => setEditTarget(null)}
+            saving={saving}
+          />
+        </div>
+      )}
+
+      {/* Version List */}
+      {loading ? (
+        <div style={S.emptyState}>
+          <RefreshCw size={28} style={{ color: '#10b981', animation: 'spin 1s linear infinite' }} />
+          <p style={{ marginTop: 12, color: '#64748b' }}>Loading versions…</p>
+        </div>
+      ) : versions.length === 0 ? (
+        <div style={S.emptyState}>
+          <Package size={36} style={{ color: '#334155' }} />
+          <p style={{ marginTop: 12, color: '#64748b' }}>No versions yet. Create your first one above.</p>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {versions.map((v, i) => (
+            <VersionRow
+              key={v.id}
+              version={v}
+              isCurrent={v.version === APP_VERSION}
+              isLatest={i === 0}
+              onEdit={(ver) => { setEditTarget(ver); setShowForm(false); }}
+              onDelete={handleDelete}
+            />
+          ))}
+        </div>
+      )}
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
+    </div>
+  );
+}
+
+// ── Styles ───────────────────────────────────────────────────────────────────
+const S = {
+  panel: {
+    background: 'rgba(255,255,255,0.02)',
+    border: '1px solid rgba(255,255,255,0.08)',
+    borderRadius: 20,
+    padding: 24,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 16,
+  },
+  panelHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    flexWrap: 'wrap' as const,
+  },
+  panelIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    background: 'rgba(16,185,129,0.15)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  panelTitle: { fontSize: 16, fontWeight: 700, color: '#f1f5f9', margin: 0 },
+  panelSub:   { fontSize: 12, color: '#64748b', marginTop: 2 },
+
+  formSection: {
+    background: 'rgba(255,255,255,0.03)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 14,
+    padding: 16,
+  },
+  formSectionLabel: {
+    fontSize: 11,
+    fontWeight: 700,
+    color: '#64748b',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.06em',
+    marginBottom: 12,
+  },
+  formWrap: { display: 'flex', flexDirection: 'column' as const, gap: 12 },
+  formRow:  { display: 'flex', flexDirection: 'column' as const, gap: 6 },
+  label:    { fontSize: 12, fontWeight: 600, color: '#94a3b8' },
+  input: {
+    background: 'rgba(255,255,255,0.06)',
+    border: '1px solid rgba(255,255,255,0.12)',
+    borderRadius: 10,
+    padding: '10px 14px',
+    fontSize: 13,
+    color: '#f1f5f9',
+    fontFamily: 'inherit',
+    outline: 'none',
+    width: '100%',
+  } as React.CSSProperties,
+
+  versionCard: {
+    border: '1px solid',
+    borderRadius: 14,
+    padding: '14px 16px',
+    transition: 'border-color 0.2s',
+  },
+  versionIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  badge: (color: string) => ({
+    fontSize: 9,
+    fontWeight: 800,
+    color: '#fff',
+    background: color,
+    padding: '2px 7px',
+    borderRadius: 4,
+    letterSpacing: '0.04em',
+  }),
+  iconBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    background: 'rgba(255,255,255,0.06)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    color: '#94a3b8',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.15s',
+    textDecoration: 'none',
+  } as React.CSSProperties,
+  changelog: {
+    marginTop: 12,
+    padding: '10px 12px',
+    background: 'rgba(0,0,0,0.2)',
+    borderRadius: 8,
+    fontSize: 12,
+    color: '#cbd5e1',
+    whiteSpace: 'pre-wrap' as const,
+    fontFamily: 'monospace',
+    lineHeight: 1.6,
+    border: '1px solid rgba(255,255,255,0.06)',
+  },
+
+  btnPrimary: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '8px 16px',
+    background: 'linear-gradient(135deg,#10b981,#059669)',
+    border: 'none',
+    borderRadius: 10,
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  } as React.CSSProperties,
+  btnGhost: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '8px 14px',
+    background: 'rgba(255,255,255,0.06)',
+    border: '1px solid rgba(255,255,255,0.12)',
+    borderRadius: 10,
+    color: '#94a3b8',
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  } as React.CSSProperties,
+
+  errBanner: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    background: 'rgba(239,68,68,0.1)',
+    border: '1px solid rgba(239,68,68,0.25)',
+    borderRadius: 10,
+    padding: '10px 14px',
+    fontSize: 13,
+    color: '#f87171',
+  },
+  emptyState: {
+    textAlign: 'center' as const,
+    padding: '40px 20px',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
+  },
+};
