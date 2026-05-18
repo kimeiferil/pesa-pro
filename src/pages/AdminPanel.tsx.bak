@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 /* ─────────────────────────────────────────────
    DESIGN TOKENS
@@ -33,8 +33,21 @@ const PLAN_COLOR: Record<string, string> = {
    HELPERS
 ───────────────────────────────────────────── */
 const fmtDate = (d: any) =>
-  d ? new Date(d).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
+  d ? new Date(d).toLocaleDateString('en-KE', {
+    day: 'numeric', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  }) : '-';
 const kes = (n: number) => `KES ${(n || 0).toLocaleString('en-KE')}`;
+
+function semverGt(a: string, b: string): boolean {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return true;
+    if ((pa[i] || 0) < (pb[i] || 0)) return false;
+  }
+  return false;
+}
 
 /* ─────────────────────────────────────────────
    TINY UI COMPONENTS
@@ -129,6 +142,167 @@ function ConfirmModal({ message, onConfirm, onCancel, danger }: any) {
 }
 
 /* ─────────────────────────────────────────────
+   VERSION FORM (add / edit)
+───────────────────────────────────────────── */
+interface VersionForm {
+  version: string;
+  changelog: string;
+  download_url: string;
+  is_required: boolean;
+}
+
+const EMPTY_VERSION_FORM: VersionForm = {
+  version: '',
+  changelog: '',
+  download_url: '',
+  is_required: false,
+};
+
+function VersionModal({
+  initial,
+  onSave,
+  onClose,
+  saving,
+}: {
+  initial?: VersionForm & { id?: string };
+  onSave: (data: VersionForm & { id?: string }) => void;
+  onClose: () => void;
+  saving: boolean;
+}) {
+  const [form, setForm] = useState<VersionForm>(initial ?? EMPTY_VERSION_FORM);
+  const isEdit = !!initial?.id;
+
+  const set = (k: keyof VersionForm, v: any) => setForm(f => ({ ...f, [k]: v }));
+
+  const inputStyle = {
+    width: '100%', padding: '10px 12px',
+    background: C.surface2, border: `1px solid ${C.border}`,
+    borderRadius: 10, color: C.text, fontSize: 13, fontFamily: 'inherit',
+  };
+
+  const labelStyle = {
+    display: 'block' as const, fontSize: 11, fontWeight: 700,
+    color: C.muted, textTransform: 'uppercase' as const,
+    letterSpacing: '0.06em', marginBottom: 6,
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
+      backdropFilter: 'blur(8px)', zIndex: 600,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+    }}>
+      <div style={{
+        background: C.surface, border: `1px solid ${C.borderHi}`,
+        borderRadius: 18, width: '100%', maxWidth: 480, padding: 28,
+      }}>
+        <p style={{ margin: '0 0 20px', fontWeight: 900, fontSize: 16, color: C.text }}>
+          {isEdit ? 'Edit Version' : 'Publish New Version'}
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Version number */}
+          <div>
+            <label style={labelStyle}>Version Number *</label>
+            <input
+              style={inputStyle}
+              placeholder="e.g. 1.0.2"
+              value={form.version}
+              onChange={e => set('version', e.target.value)}
+              disabled={isEdit} // don't change version on edit — it's the PK
+            />
+            {isEdit && (
+              <p style={{ margin: '4px 0 0', fontSize: 10, color: C.muted }}>
+                Version number cannot be changed after creation.
+              </p>
+            )}
+          </div>
+
+          {/* Changelog */}
+          <div>
+            <label style={labelStyle}>Changelog *</label>
+            <textarea
+              style={{ ...inputStyle, minHeight: 100, resize: 'vertical' as const, lineHeight: 1.6 }}
+              placeholder={'• Bug fixes and performance improvements\n• New feature X\n• Improved Y'}
+              value={form.changelog}
+              onChange={e => set('changelog', e.target.value)}
+            />
+          </div>
+
+          {/* Download URL */}
+          <div>
+            <label style={labelStyle}>Download URL</label>
+            <input
+              style={inputStyle}
+              placeholder="https://github.com/yourrepo/releases/download/v1.0.2/App.apk"
+              value={form.download_url}
+              onChange={e => set('download_url', e.target.value)}
+            />
+          </div>
+
+          {/* Required toggle */}
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '12px 14px', background: C.surface3, borderRadius: 11,
+            border: `1px solid ${C.border}`,
+          }}>
+            <div>
+              <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: C.text }}>Force update</p>
+              <p style={{ margin: '2px 0 0', fontSize: 11, color: C.muted }}>
+                Users must update before continuing. Use with care.
+              </p>
+            </div>
+            <button
+              onClick={() => set('is_required', !form.is_required)}
+              style={{
+                width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer',
+                background: form.is_required ? C.amber : C.surface2,
+                position: 'relative', transition: 'background .2s', flexShrink: 0,
+              }}
+            >
+              <span style={{
+                position: 'absolute', top: 2,
+                left: form.is_required ? 22 : 2,
+                width: 20, height: 20, borderRadius: '50%',
+                background: form.is_required ? '#011a10' : C.muted,
+                transition: 'left .2s',
+              }} />
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 22 }}>
+          <button
+            onClick={onClose}
+            style={{
+              flex: 1, padding: '11px', background: 'transparent',
+              border: `1px solid ${C.border}`, borderRadius: 10,
+              color: C.sub, fontWeight: 700, fontSize: 13,
+              cursor: 'pointer', fontFamily: 'inherit',
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            disabled={saving || !form.version.trim() || !form.changelog.trim()}
+            onClick={() => onSave({ ...form, id: initial?.id })}
+            style={{
+              flex: 2, padding: '11px',
+              background: saving ? C.surface3 : C.indigo,
+              border: 'none', borderRadius: 10,
+              color: saving ? C.muted : '#fff', fontWeight: 800, fontSize: 13,
+              cursor: saving ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+            }}
+          >
+            {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Publish Version'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
    GLOBAL CSS
 ───────────────────────────────────────────── */
 const CSS = `
@@ -137,7 +311,7 @@ const CSS = `
   .ap-root { font-family: 'Outfit', sans-serif; background: ${C.bg}; color: ${C.text}; min-height: 100vh; }
   .ap-row { transition: background .12s; }
   .ap-row:hover { background: rgba(255,255,255,0.025); }
-  input:focus, select:focus { outline: none; border-color: ${C.indigo} !important; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: ${C.indigo} !important; }
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
@@ -150,20 +324,23 @@ const CSS = `
 ───────────────────────────────────────────── */
 export default function AdminPanel() {
   const { user, profile: myProfile } = useAuth();
+  const queryClient = useQueryClient();
 
   // ── Guard: only show to admins ─────────────
   const isAdmin = myProfile?.role === 'admin';
 
   // ── UI state ───────────────────────────────
-  const [tab,       setTab]       = useState<'payments' | 'users'>('payments');
-  const [filter,    setFilter]    = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
-  const [search,    setSearch]    = useState('');
-  const [working,   setWorking]   = useState<string | null>(null);   // submission id being processed
-  const [confirm,   setConfirm]   = useState<null | { message: string; danger?: boolean; onConfirm: () => void }>(null);
-  const [planEdit,  setPlanEdit]  = useState<null | { userId: string; current: string }>(null);
-  const [toast,     setToast]     = useState<string | null>(null);
+  const [tab,          setTab]          = useState<'payments' | 'users' | 'versions'>('payments');
+  const [filter,       setFilter]       = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
+  const [search,       setSearch]       = useState('');
+  const [working,      setWorking]      = useState<string | null>(null);
+  const [confirm,      setConfirm]      = useState<null | { message: string; danger?: boolean; onConfirm: () => void }>(null);
+  const [planEdit,     setPlanEdit]     = useState<null | { userId: string; current: string }>(null);
+  const [toast,        setToast]        = useState<string | null>(null);
+  const [versionModal, setVersionModal] = useState<null | (VersionForm & { id?: string })>(null);
+  const [deleteVerId,  setDeleteVerId]  = useState<string | null>(null);
 
-  /* ── Load data with useQuery for offline support ── */
+  /* ── Load data ── */
   const { data: submissions = [], isLoading: loadingSubmissions, refetch: refetchSubmissions } = useQuery({
     queryKey: ['admin_submissions'],
     queryFn: async () => {
@@ -174,7 +351,7 @@ export default function AdminPanel() {
       return data || [];
     },
     enabled: isAdmin,
-    staleTime: 1000 * 60 * 30, // 30 mins
+    staleTime: 1000 * 60 * 30,
   });
 
   const { data: users = [], isLoading: loadingUsers, refetch: refetchUsers } = useQuery({
@@ -187,42 +364,55 @@ export default function AdminPanel() {
       return data || [];
     },
     enabled: isAdmin,
-    staleTime: 1000 * 60 * 30, // 30 mins
+    staleTime: 1000 * 60 * 30,
   });
 
-  const loading = loadingSubmissions || loadingUsers;
+  const { data: versions = [], isLoading: loadingVersions, refetch: refetchVersions } = useQuery({
+    queryKey: ['admin_versions'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('app_versions')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: isAdmin,
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const loading = loadingSubmissions || loadingUsers || loadingVersions;
 
   /* ── Toast helper ── */
   const showToast = (msg: string) => {
     setToast(msg);
-    setTimeout(() => setToast(null), 3000);
+    setTimeout(() => setToast(null), 3200);
   };
+
+  /* ── Refresh all ── */
+  const refreshAll = useCallback(async () => {
+    await Promise.all([refetchSubmissions(), refetchUsers(), refetchVersions()]);
+    showToast('Refreshed');
+  }, [refetchSubmissions, refetchUsers, refetchVersions]);
 
   /* ── Approve payment ── */
   const approvePayment = async (sub: any) => {
     setWorking(sub.id);
     try {
-      // 1. Update profile plan
       const { error: planErr } = await supabase
         .from('profiles')
         .update({ plan: sub.plan_requested, updated_at: new Date().toISOString() })
         .eq('id', sub.user_id);
       if (planErr) throw planErr;
 
-      // 2. Mark submission approved
       const { error: subErr, data: updatedSub } = await supabase
         .from('payment_submissions')
         .update({ status: 'approved', reviewed_at: new Date().toISOString() })
         .eq('id', sub.id)
         .select();
-
       if (subErr) throw subErr;
+      if (!updatedSub || updatedSub.length === 0) throw new Error('Update failed: record not found or permission denied');
 
-      if (!updatedSub || updatedSub.length === 0) {
-        throw new Error('Update failed: record not found or permission denied');
-      }
-
-      // 3. Refresh data
       await Promise.all([refetchSubmissions(), refetchUsers()]);
       showToast(`Approved — ${sub.profiles?.email} upgraded to ${sub.plan_requested}`);
     } catch (e: any) {
@@ -240,7 +430,6 @@ export default function AdminPanel() {
         .from('payment_submissions')
         .update({ status: 'rejected', reviewed_at: new Date().toISOString() })
         .eq('id', sub.id);
-
       await refetchSubmissions();
       showToast('Payment rejected');
     } catch (e: any) {
@@ -258,7 +447,6 @@ export default function AdminPanel() {
         .update({ plan: newPlan, updated_at: new Date().toISOString() })
         .eq('id', userId);
       if (error) throw error;
-
       await refetchUsers();
       setPlanEdit(null);
       showToast(`Plan updated to ${newPlan}`);
@@ -273,6 +461,60 @@ export default function AdminPanel() {
       await supabase.from('profiles').update({ is_active: !u.is_active }).eq('id', u.id);
       await refetchUsers();
       showToast(u.is_active ? 'User deactivated' : 'User activated');
+    } catch (e: any) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  /* ── Version CRUD ── */
+  const [versionSaving, setVersionSaving] = useState(false);
+
+  const saveVersion = async (data: VersionForm & { id?: string }) => {
+    setVersionSaving(true);
+    try {
+      if (data.id) {
+        // Edit — update by version string (PK)
+        const { error } = await supabase
+          .from('app_versions')
+          .update({
+            changelog:    data.changelog,
+            download_url: data.download_url,
+            is_required:  data.is_required,
+          })
+          .eq('version', data.version);
+        if (error) throw error;
+        showToast(`Version ${data.version} updated`);
+      } else {
+        // New version
+        const { error } = await supabase
+          .from('app_versions')
+          .insert({
+            version:      data.version.trim(),
+            changelog:    data.changelog.trim(),
+            download_url: data.download_url.trim(),
+            is_required:  data.is_required,
+          });
+        if (error) throw error;
+        showToast(`Version ${data.version} published`);
+      }
+      setVersionModal(null);
+      await refetchVersions();
+    } catch (e: any) {
+      alert('Error: ' + e.message);
+    } finally {
+      setVersionSaving(false);
+    }
+  };
+
+  const deleteVersion = async (version: string) => {
+    try {
+      const { error } = await supabase
+        .from('app_versions')
+        .delete()
+        .eq('version', version);
+      if (error) throw error;
+      await refetchVersions();
+      showToast(`Version ${version} deleted`);
     } catch (e: any) {
       alert('Error: ' + e.message);
     }
@@ -304,11 +546,14 @@ export default function AdminPanel() {
   });
 
   /* ── Stats ── */
-  const pending  = submissions.filter(s => s.status === 'pending').length;
-  const approved = submissions.filter(s => s.status === 'approved').length;
-  const revenue  = submissions.filter(s => s.status === 'approved').reduce((s, x) => s + (x.amount || 0), 0);
-  const proUsers = users.filter(u => u.plan === 'pro').length;
+  const pending   = submissions.filter(s => s.status === 'pending').length;
+  const approved  = submissions.filter(s => s.status === 'approved').length;
+  const revenue   = submissions.filter(s => s.status === 'approved').reduce((s, x) => s + (x.amount || 0), 0);
+  const proUsers  = users.filter(u => u.plan === 'pro').length;
   const premUsers = users.filter(u => u.plan === 'premium').length;
+
+  // Latest version for context
+  const latestVersion = versions[0];
 
   /* ── Guard renders ── */
   if (isAdmin === false) {
@@ -322,7 +567,6 @@ export default function AdminPanel() {
     );
   }
 
-  // If isAdmin is null/undefined (still loading profile), we show a quick loader
   if (loading && !myProfile) {
     return (
       <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -403,13 +647,27 @@ export default function AdminPanel() {
         </div>
       )}
 
+      {/* ── Version modal ─────────────────────── */}
+      {versionModal !== null && (
+        <VersionModal
+          initial={versionModal}
+          onSave={saveVersion}
+          onClose={() => setVersionModal(null)}
+          saving={versionSaving}
+        />
+      )}
+
       {/* ── Header ────────────────────────────── */}
       <header style={{
         position: 'sticky', top: 0, zIndex: 100,
         background: 'rgba(6,8,16,0.96)', backdropFilter: 'blur(20px)',
         borderBottom: `1px solid ${C.border}`,
       }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 20px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+        <div style={{
+          maxWidth: 1100, margin: '0 auto', padding: '0 20px',
+          height: 56, display: 'flex', alignItems: 'center',
+          justifyContent: 'space-between', gap: 16,
+        }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{
               width: 32, height: 32, borderRadius: 8,
@@ -425,7 +683,6 @@ export default function AdminPanel() {
             </div>
           </div>
 
-          {/* Search */}
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -447,7 +704,7 @@ export default function AdminPanel() {
               </div>
             )}
             <button
-              onClick={() => { loadSubmissions(); loadUsers(); showToast('Refreshed'); }}
+              onClick={refreshAll}
               style={{
                 background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 9,
                 padding: '7px 13px', color: C.sub, fontSize: 12, fontWeight: 700,
@@ -472,25 +729,15 @@ export default function AdminPanel() {
         </div>
 
         {/* ── Tab switcher ───────────────────────── */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
-          <Pill
-            label="Payment Submissions"
-            active={tab === 'payments'}
-            count={submissions.length}
-            onClick={() => { setTab('payments'); setSearch(''); }}
-          />
-          <Pill
-            label="All Users"
-            active={tab === 'users'}
-            count={users.length}
-            onClick={() => { setTab('users'); setSearch(''); }}
-          />
+        <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+          <Pill label="Payment Submissions" active={tab === 'payments'} count={submissions.length} onClick={() => { setTab('payments'); setSearch(''); }} />
+          <Pill label="All Users"           active={tab === 'users'}    count={users.length}        onClick={() => { setTab('users');    setSearch(''); }} />
+          <Pill label="App Versions"        active={tab === 'versions'} count={versions.length}     onClick={() => { setTab('versions'); setSearch(''); }} />
         </div>
 
         {/* ══ PAYMENTS TAB ════════════════════════ */}
         {tab === 'payments' && (
           <div className="fade-in">
-            {/* Status filter */}
             <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
               {(['pending', 'approved', 'rejected', 'all'] as const).map(f => (
                 <button
@@ -509,7 +756,7 @@ export default function AdminPanel() {
               ))}
             </div>
 
-            {loading
+            {loadingSubmissions
               ? <p style={{ color: C.muted, textAlign: 'center', padding: 48 }}>Loading...</p>
               : filteredSubs.length === 0
                 ? (
@@ -522,19 +769,14 @@ export default function AdminPanel() {
                 )
                 : (
                   <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: 'hidden' }}>
-                    {/* Table header */}
                     <div style={{
                       display: 'grid',
                       gridTemplateColumns: '1fr 1fr 100px 90px 100px 80px 160px',
                       padding: '10px 18px', borderBottom: `1px solid ${C.border}`,
                       fontSize: 10, fontWeight: 800, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.07em',
                     }}>
-                      <span>User</span>
-                      <span>M-Pesa Code</span>
-                      <span>Amount</span>
-                      <span>Plan</span>
-                      <span>Status</span>
-                      <span>Submitted</span>
+                      <span>User</span><span>M-Pesa Code</span><span>Amount</span>
+                      <span>Plan</span><span>Status</span><span>Submitted</span>
                       <span style={{ textAlign: 'right' }}>Actions</span>
                     </div>
 
@@ -552,7 +794,6 @@ export default function AdminPanel() {
                             alignItems: 'center', gap: 8,
                           }}
                         >
-                          {/* User */}
                           <div style={{ minWidth: 0 }}>
                             <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {s.profiles?.full_name || 'Unknown'}
@@ -561,33 +802,14 @@ export default function AdminPanel() {
                               {s.profiles?.email || s.phone}
                             </p>
                           </div>
-
-                          {/* M-Pesa code */}
                           <div>
-                            <p className="mono" style={{ margin: 0, fontSize: 12, color: C.green, fontWeight: 700, letterSpacing: '0.03em' }}>
-                              {s.mpesa_code}
-                            </p>
+                            <p className="mono" style={{ margin: 0, fontSize: 12, color: C.green, fontWeight: 700, letterSpacing: '0.03em' }}>{s.mpesa_code}</p>
                             <p style={{ margin: '2px 0 0', fontSize: 10, color: C.muted }}>{s.phone}</p>
                           </div>
-
-                          {/* Amount */}
                           <p style={{ margin: 0, fontWeight: 800, fontSize: 13, color: C.text }}>{kes(s.amount)}</p>
-
-                          {/* Requested plan */}
                           <Badge label={s.plan_requested} color={PLAN_COLOR[s.plan_requested] || C.muted} />
-
-                          {/* Status */}
-                          <Badge
-                            label={s.status}
-                            color={s.status === 'approved' ? C.green : s.status === 'rejected' ? C.red : C.amber}
-                          />
-
-                          {/* Date */}
-                          <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
-                            {fmtDate(s.submitted_at).split(',')[0]}
-                          </p>
-
-                          {/* Actions */}
+                          <Badge label={s.status} color={s.status === 'approved' ? C.green : s.status === 'rejected' ? C.red : C.amber} />
+                          <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>{fmtDate(s.submitted_at).split(',')[0]}</p>
                           <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                             {s.status === 'pending' && (
                               <>
@@ -627,9 +849,7 @@ export default function AdminPanel() {
                               </>
                             )}
                             {s.status !== 'pending' && (
-                              <span style={{ fontSize: 11, color: C.muted }}>
-                                {fmtDate(s.reviewed_at).split(',')[0]}
-                              </span>
+                              <span style={{ fontSize: 11, color: C.muted }}>{fmtDate(s.reviewed_at).split(',')[0]}</span>
                             )}
                           </div>
                         </div>
@@ -644,11 +864,10 @@ export default function AdminPanel() {
         {/* ══ USERS TAB ═══════════════════════════ */}
         {tab === 'users' && (
           <div className="fade-in">
-            {loading
+            {loadingUsers
               ? <p style={{ color: C.muted, textAlign: 'center', padding: 48 }}>Loading...</p>
               : (
                 <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: 'hidden' }}>
-                  {/* Table header */}
                   <div style={{
                     display: 'grid',
                     gridTemplateColumns: '1fr 140px 90px 80px 140px 180px',
@@ -656,11 +875,8 @@ export default function AdminPanel() {
                     fontSize: 10, fontWeight: 800, color: C.muted,
                     textTransform: 'uppercase', letterSpacing: '0.07em',
                   }}>
-                    <span>User</span>
-                    <span>Phone</span>
-                    <span>Plan</span>
-                    <span>Status</span>
-                    <span>Joined</span>
+                    <span>User</span><span>Phone</span><span>Plan</span>
+                    <span>Status</span><span>Joined</span>
                     <span style={{ textAlign: 'right' }}>Actions</span>
                   </div>
 
@@ -680,7 +896,6 @@ export default function AdminPanel() {
                         alignItems: 'center', gap: 8,
                       }}
                     >
-                      {/* User */}
                       <div style={{ minWidth: 0 }}>
                         <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {u.full_name || 'No name'}
@@ -694,20 +909,10 @@ export default function AdminPanel() {
                           {u.email}
                         </p>
                       </div>
-
-                      {/* Phone */}
                       <p className="mono" style={{ margin: 0, fontSize: 11, color: C.sub }}>{u.phone || '-'}</p>
-
-                      {/* Plan */}
                       <Badge label={u.plan} color={PLAN_COLOR[u.plan] || C.muted} />
-
-                      {/* Active status */}
                       <Badge label={u.is_active ? 'Active' : 'Off'} color={u.is_active ? C.green : C.red} />
-
-                      {/* Joined */}
                       <p style={{ margin: 0, fontSize: 11, color: C.muted }}>{fmtDate(u.created_at).split(',')[0]}</p>
-
-                      {/* Actions */}
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                         <button
                           onClick={() => setPlanEdit({ userId: u.id, current: u.plan })}
@@ -745,6 +950,186 @@ export default function AdminPanel() {
                   ))}
                 </div>
               )
+            }
+          </div>
+        )}
+
+        {/* ══ VERSIONS TAB ════════════════════════ */}
+        {tab === 'versions' && (
+          <div className="fade-in">
+
+            {/* Header row */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+              <div>
+                <p style={{ margin: 0, fontWeight: 800, fontSize: 15, color: C.text }}>App Versions</p>
+                <p style={{ margin: '3px 0 0', fontSize: 12, color: C.muted }}>
+                  Manage release versions and update banners shown to users.
+                  {latestVersion && (
+                    <> Latest: <span className="mono" style={{ color: C.green }}>{latestVersion.version}</span></>
+                  )}
+                </p>
+              </div>
+              <button
+                onClick={() => setVersionModal({ ...EMPTY_VERSION_FORM })}
+                style={{
+                  padding: '9px 18px', background: C.indigo, border: 'none',
+                  borderRadius: 10, color: '#fff', fontSize: 13, fontWeight: 800,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  display: 'flex', alignItems: 'center', gap: 7,
+                }}
+              >
+                <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Publish Version
+              </button>
+            </div>
+
+            {/* Info callout */}
+            <div style={{
+              background: `${C.blue}10`, border: `1px solid ${C.blue}25`,
+              borderRadius: 12, padding: '12px 16px', marginBottom: 18,
+              display: 'flex', gap: 10, alignItems: 'flex-start',
+            }}>
+              <span style={{ fontSize: 16, flexShrink: 0 }}>ℹ️</span>
+              <p style={{ margin: 0, fontSize: 12, color: C.sub, lineHeight: 1.6 }}>
+                The update banner in the app appears when the database contains a version newer than the
+                hardcoded <span className="mono" style={{ color: C.blue }}>APP_VERSION</span> in{' '}
+                <span className="mono" style={{ color: C.blue }}>App.tsx</span>.
+                Publishing a higher version here will trigger the banner for all users on older builds.
+                Enable <strong style={{ color: C.amber }}>Force update</strong> to block access until users upgrade.
+              </p>
+            </div>
+
+            {loadingVersions
+              ? <p style={{ color: C.muted, textAlign: 'center', padding: 48 }}>Loading versions...</p>
+              : versions.length === 0
+                ? (
+                  <div style={{
+                    textAlign: 'center', padding: '56px 20px',
+                    background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16,
+                  }}>
+                    <p style={{ fontSize: 32, margin: '0 0 12px' }}>📦</p>
+                    <p style={{ color: C.text, fontWeight: 700, fontSize: 15, margin: '0 0 6px' }}>No versions yet</p>
+                    <p style={{ color: C.muted, fontSize: 13, margin: '0 0 20px' }}>
+                      Publish your first version to start showing update banners.
+                    </p>
+                    <button
+                      onClick={() => setVersionModal({ ...EMPTY_VERSION_FORM })}
+                      style={{
+                        padding: '10px 22px', background: C.indigo, border: 'none',
+                        borderRadius: 10, color: '#fff', fontSize: 13, fontWeight: 800,
+                        cursor: 'pointer', fontFamily: 'inherit',
+                      }}
+                    >
+                      Publish First Version
+                    </button>
+                  </div>
+                )
+                : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {versions.map((v: any, i: number) => {
+                      const isLatest = i === 0;
+                      return (
+                        <div
+                          key={v.version}
+                          style={{
+                            background: C.surface,
+                            border: `1px solid ${isLatest ? C.indigo + '50' : C.border}`,
+                            borderRadius: 14, padding: '16px 20px',
+                            display: 'flex', alignItems: 'flex-start',
+                            gap: 16, flexWrap: 'wrap',
+                          }}
+                        >
+                          {/* Version badge + meta */}
+                          <div style={{ flex: '0 0 auto', minWidth: 120 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                              <span className="mono" style={{ fontSize: 20, fontWeight: 900, color: isLatest ? C.indigo : C.text, letterSpacing: '-0.5px' }}>
+                                v{v.version}
+                              </span>
+                              {isLatest && <Badge label="Latest" color={C.indigo} />}
+                            </div>
+                            <p style={{ margin: '0 0 4px', fontSize: 11, color: C.muted }}>
+                              Published {fmtDate(v.created_at).split(',')[0]}
+                            </p>
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                              {v.is_required && <Badge label="Force Update" color={C.amber} />}
+                              {v.download_url && <Badge label="Has APK" color={C.green} />}
+                            </div>
+                          </div>
+
+                          {/* Changelog */}
+                          <div style={{ flex: 1, minWidth: 200 }}>
+                            <p style={{ margin: '0 0 6px', fontSize: 10, fontWeight: 800, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                              Changelog
+                            </p>
+                            <pre style={{
+                              margin: 0, fontSize: 12, color: C.sub,
+                              fontFamily: 'Outfit, sans-serif', lineHeight: 1.7,
+                              whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                            }}>
+                              {v.changelog}
+                            </pre>
+                          </div>
+
+                          {/* Download URL */}
+                          {v.download_url && (
+                            <div style={{ flex: '0 0 auto', maxWidth: 220, minWidth: 0 }}>
+                              <p style={{ margin: '0 0 4px', fontSize: 10, fontWeight: 800, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                                Download URL
+                              </p>
+                              <a
+                                href={v.download_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  fontSize: 11, color: C.blue,
+                                  textDecoration: 'none', wordBreak: 'break-all',
+                                  display: 'block',
+                                }}
+                              >
+                                {v.download_url.length > 50 ? v.download_url.slice(0, 50) + '…' : v.download_url}
+                              </a>
+                            </div>
+                          )}
+
+                          {/* Actions */}
+                          <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexShrink: 0, alignSelf: 'center' }}>
+                            <button
+                              onClick={() => setVersionModal({
+                                id:           v.version,
+                                version:      v.version,
+                                changelog:    v.changelog,
+                                download_url: v.download_url || '',
+                                is_required:  v.is_required,
+                              })}
+                              style={{
+                                padding: '6px 13px', background: `${C.indigo}15`,
+                                border: `1px solid ${C.indigo}30`, borderRadius: 8,
+                                color: C.indigo, fontSize: 11, fontWeight: 800,
+                                cursor: 'pointer', fontFamily: 'inherit',
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => setConfirm({
+                                message: `Delete version ${v.version}? This cannot be undone. Users currently on this version will no longer see it listed.`,
+                                danger: true,
+                                onConfirm: () => deleteVersion(v.version),
+                              })}
+                              style={{
+                                padding: '6px 13px', background: `${C.red}12`,
+                                border: `1px solid ${C.red}25`, borderRadius: 8,
+                                color: C.red, fontSize: 11, fontWeight: 800,
+                                cursor: 'pointer', fontFamily: 'inherit',
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
             }
           </div>
         )}
