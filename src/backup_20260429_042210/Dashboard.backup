@@ -1,0 +1,247 @@
+﻿import { useEffect, useState } from 'react';
+import { useNavigate } from "react-router-dom";
+import { getTransactions } from '../features/transactions/transactionService';
+import { DollarSign, FileText, Upload, BarChart3, Clock, Target, ChevronRight, LogOut } from 'lucide-react';
+import { supabase } from '../lib/supabase'; // Import supabase directly
+
+export default function Dashboard() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState(null);
+  const [stats, setStats] = useState({ total: 0, count: 0, average: 0, today: 0 });
+  const [recentTransactions, setRecentTransactions] = useState([]);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  useEffect(() => { 
+    loadStats();
+    // Get current user
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setUser(user);
+    });
+  }, []);
+
+  const loadStats = async () => {
+    try {
+      const data = await getTransactions();
+      const total = data.reduce((sum, t) => sum + (t.amount || 0), 0);
+      const today = data.filter((t) => {
+        const todayDate = new Date().toDateString();
+        const tDate = t.created_at ? new Date(t.created_at).toDateString() : '';
+        return tDate === todayDate;
+      }).reduce((sum, t) => sum + (t.amount || 0), 0);
+      setStats({ total, count: data.length, average: data.length ? total / data.length : 0, today });
+      setRecentTransactions(data.slice(0, 5));
+    } catch (error) {
+      console.error('Error loading stats:', error);
+    }
+  };
+
+  // DIRECT LOGOUT FUNCTION - NO AUTH CONTEXT NEEDED
+  const handleLogout = async () => {
+    console.log('Logout button clicked');
+    setLoggingOut(true);
+    
+    try {
+      // Direct Supabase logout
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.error('Logout error:', error);
+        alert('Logout failed: ' + error.message);
+        setLoggingOut(false);
+      } else {
+        console.log('Logout successful');
+        // Clear any stored session data
+        localStorage.removeItem('supabase.auth.token');
+        sessionStorage.clear();
+        // Navigate to login
+        navigate('/login');
+      }
+    } catch (err) {
+      console.error('Logout caught error:', err);
+      setLoggingOut(false);
+      alert('Logout error: ' + err.message);
+    }
+  };
+
+  const statsCards = [
+    { title: 'Total Revenue',     value: `KSh ${stats.total.toLocaleString()}`,             change: '+12.5%', icon: DollarSign, accent: '#10b981', glow: 'rgba(16,185,129,0.2)' },
+    { title: 'Transactions',      value: stats.count.toString(),                              change: '+8.2%',  icon: FileText,   accent: '#63b3ed', glow: 'rgba(99,179,237,0.2)'  },
+    { title: 'Average Amount',    value: `KSh ${Math.round(stats.average).toLocaleString()}`, change: '+3.1%',  icon: BarChart3,  accent: '#a78bfa', glow: 'rgba(167,139,250,0.2)' },
+    { title: "Today's Revenue",   value: `KSh ${stats.today.toLocaleString()}`,              change: '+18.3%', icon: Clock,      accent: '#f59e0b', glow: 'rgba(245,158,11,0.2)'  },
+  ];
+
+  const quickActions = [
+    { label: 'Import SMS',     icon: Upload, path: '/import',              accent: '#63b3ed', desc: 'Parse M-Pesa message' },
+    { label: 'Transaction Log',icon: FileText,path: '/transactions',       accent: '#a78bfa', desc: 'View all records'      },
+    { label: 'Campaigns',      icon: Target,  path: '/campaigns',          accent: '#10b981', desc: 'Fundraising campaigns' },
+  ];
+
+  return (
+    <div style={{ minHeight: '100vh', background: '#0a0f1e', color: '#e2e8f0', fontFamily: "'DM Sans', 'Segoe UI', sans-serif" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
+        * { box-sizing: border-box; }
+        .stat-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 18px; padding: 22px; transition: all 0.25s; cursor: default; }
+        .stat-card:hover { background: rgba(255,255,255,0.05); transform: translateY(-2px); }
+        .action-btn { display:flex; align-items:center; gap:14px; padding:18px 20px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:16px; cursor:pointer; transition:all 0.2s; text-align:left; width:100%; }
+        .action-btn:hover { background:rgba(255,255,255,0.06); transform:translateX(4px); }
+        .tx-row { display:grid; grid-template-columns:1fr 1.5fr 1fr 1.5fr; gap:12px; align-items:center; padding:12px 20px; border-bottom:1px solid rgba(255,255,255,0.04); transition:background 0.15s; }
+        .tx-row:hover { background:rgba(255,255,255,0.03); }
+        .tx-header { display:grid; grid-template-columns:1fr 1.5fr 1fr 1.5fr; gap:12px; align-items:center; padding:12px 20px; background: rgba(255,255,255,0.02); border-bottom:1px solid rgba(255,255,255,0.06); }
+        @keyframes fadeUp { from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:translateY(0);} }
+        .fade-up { animation: fadeUp 0.4s ease forwards; }
+      `}</style>
+
+      {/* Header with Logout Button */}
+      <div style={{ background: 'rgba(10,15,30,0.96)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255,255,255,0.06)', position: 'sticky', top: 0, zIndex: 20 }}>
+        <div style={{ maxWidth: 1320, margin: '0 auto', padding: '14px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 44, height: 44, background: 'linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, boxShadow: '0 0 24px rgba(99,102,241,0.4)' }}>💸</div>
+            <div>
+              <h1 style={{ fontSize: 20, fontWeight: 800, margin: 0, color: '#f1f5f9', letterSpacing: '-0.3px' }}>Pesa Pro</h1>
+              <p style={{ fontSize: 11, color: '#475569', margin: 0, fontWeight: 500 }}>M-Pesa Transaction Manager</p>
+            </div>
+          </div>
+          
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {/* Quick Action Buttons */}
+            {quickActions.map(a => (
+              <button key={a.label} onClick={() => navigate(a.path)} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 18px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, cursor: 'pointer', color: '#94a3b8', fontSize: 13, fontWeight: 500, transition: 'all 0.2s' }}>
+                <a.icon size={15} style={{ color: a.accent }} /> {a.label}
+              </button>
+            ))}
+            
+            {/* User Email */}
+            {user && (
+              <span style={{ fontSize: 12, color: '#94a3b8', padding: '0 8px' }}>
+                {user.email?.split('@')[0]}
+              </span>
+            )}
+            
+            {/* Logout Button - DIRECT IMPLEMENTATION */}
+            <button 
+              onClick={handleLogout}
+              disabled={loggingOut}
+              style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: 7, 
+                padding: '9px 18px', 
+                background: '#ef4444', 
+                border: 'none', 
+                borderRadius: 10, 
+                cursor: loggingOut ? 'not-allowed' : 'pointer', 
+                color: 'white', 
+                fontSize: 13, 
+                fontWeight: 500, 
+                transition: 'all 0.2s',
+                opacity: loggingOut ? 0.7 : 1
+              }}
+              onMouseEnter={e => { if (!loggingOut) e.currentTarget.style.background = '#dc2626'; }}
+              onMouseLeave={e => { if (!loggingOut) e.currentTarget.style.background = '#ef4444'; }}
+            >
+              <LogOut size={15} /> 
+              {loggingOut ? 'Logging out...' : 'Logout'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 1320, margin: '0 auto', padding: '32px 28px' }}>
+        {/* Hero greeting */}
+        <div style={{ marginBottom: 32 }}>
+          <h2 style={{ fontSize: 32, fontWeight: 800, margin: '0 0 4px', color: '#f1f5f9', letterSpacing: '-0.5px' }}>
+            Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'} {user?.user_metadata?.full_name?.split(' ')[0] || user?.email?.split('@')[0] || 'there'} 👋
+          </h2>
+          <p style={{ fontSize: 15, color: '#475569', margin: 0 }}>Here's your M-Pesa financial overview</p>
+        </div>
+
+        {/* Stats */}
+        <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', marginBottom: 28 }}>
+          {statsCards.map((s, i) => (
+            <div key={i} className="stat-card fade-up">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 16 }}>
+                <div style={{ width: 42, height: 42, background: `${s.accent}18`, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <s.icon size={20} style={{ color: s.accent }} />
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#10b981', background: 'rgba(16,185,129,0.1)', padding: '3px 8px', borderRadius: 999 }}>{s.change}</span>
+              </div>
+              <p style={{ fontSize: 12, color: '#475569', margin: '0 0 6px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{s.title}</p>
+              <p style={{ fontSize: 26, fontWeight: 800, margin: 0, color: '#f1f5f9', letterSpacing: '-0.5px' }}>{s.value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: 'grid', gap: 20, gridTemplateColumns: '1fr 320px' }}>
+          {/* Recent Transactions */}
+          <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 20, overflow: 'hidden' }}>
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 2px', color: '#f1f5f9' }}>Recent Transactions</h3>
+                <p style={{ fontSize: 12, color: '#475569', margin: 0 }}>Latest 5 activity</p>
+              </div>
+              <button onClick={() => navigate('/transactions')} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: 'rgba(99,179,237,0.1)', border: '1px solid rgba(99,179,237,0.2)', borderRadius: 8, cursor: 'pointer', color: '#63b3ed', fontSize: 12, fontWeight: 600 }}>
+                View all <ChevronRight size={14} />
+              </button>
+            </div>
+
+            {recentTransactions.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 48, color: '#334155' }}>
+                <FileText size={44} style={{ marginBottom: 12, opacity: 0.4 }} />
+                <p style={{ margin: '0 0 16px', fontSize: 14 }}>No transactions yet</p>
+                <button onClick={() => navigate('/import')} style={{ padding: '9px 20px', background: 'linear-gradient(135deg, #3b82f6, #6366f1)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+                  Import First SMS
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="tx-header">
+                  <span style={{ fontSize: 11, fontWeight: 600, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Date</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Sender</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Amount</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Code</span>
+                </div>
+                {recentTransactions.map((t) => (
+                  <div key={t.id} className="tx-row">
+                    <span style={{ fontSize: 12, color: '#475569' }}>{t.created_at ? new Date(t.created_at).toLocaleDateString('en-KE', { day: 'numeric', month: 'short' }) : 'N/A'}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{t.name || 'Unknown'}</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: '#10b981' }}>KSh {t.amount?.toLocaleString()}</span>
+                    <span style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", color: '#475569', background: 'rgba(255,255,255,0.04)', padding: '3px 8px', borderRadius: 6 }}>{t.transaction_code || 'N/A'}</span>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+
+          {/* Quick actions sidebar */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 20, padding: 20 }}>
+              <p style={{ fontSize: 12, color: '#475569', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 14px' }}>Quick Actions</p>
+              {quickActions.map(a => (
+                <button key={a.label} className="action-btn" onClick={() => navigate(a.path)} style={{ marginBottom: 8 }}>
+                  <div style={{ width: 38, height: 38, background: `${a.accent}15`, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <a.icon size={18} style={{ color: a.accent }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: '#e2e8f0' }}>{a.label}</p>
+                    <p style={{ margin: 0, fontSize: 11, color: '#475569' }}>{a.desc}</p>
+                  </div>
+                  <ChevronRight size={16} style={{ color: '#334155' }} />
+                </button>
+              ))}
+            </div>
+
+            {/* Mini info card */}
+            <div style={{ background: 'linear-gradient(135deg, rgba(99,102,241,0.12), rgba(59,130,246,0.08))', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 20, padding: 20 }}>
+              <div style={{ fontSize: 28, marginBottom: 10 }}>📊</div>
+              <p style={{ fontSize: 14, fontWeight: 700, color: '#c4b5fd', margin: '0 0 6px' }}>Track Everything</p>
+              <p style={{ fontSize: 12, color: '#6d28d9', lineHeight: 1.5, margin: '0 0 14px' }}>Import M-Pesa messages to automatically build your financial history</p>
+              <button onClick={() => navigate('/import')} style={{ width: '100%', padding: '10px', background: 'rgba(99,102,241,0.2)', border: '1px solid rgba(99,102,241,0.35)', borderRadius: 10, cursor: 'pointer', color: '#a78bfa', fontSize: 13, fontWeight: 600 }}>
+                Import Now →
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

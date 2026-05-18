@@ -1,0 +1,26 @@
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import Dashboard from './pages/Dashboard';
+import ImportMessage from './pages/ImportMessage';
+import Transactions from './pages/Transactions';
+import CreateCampaign from './pages/campaigns/CreateCampaign';
+import Campaigns from './pages/campaigns/Campaigns';
+import CampaignDetails from './pages/campaigns/CampaignDetails';
+import Login from './pages/Login';
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/import" element={<ImportMessage />} />
+        <Route path="/transactions" element={<Transactions />} />
+        <Route path="/campaigns" element={<Campaigns />} />
+        <Route path="/campaigns/create" element={<CreateCampaign />} />
+        <Route path="/campaigns/:id" element={<CampaignDetails />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+export default App;

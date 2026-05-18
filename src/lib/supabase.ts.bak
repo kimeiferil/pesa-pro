@@ -1,0 +1,35 @@
+﻿import { createClient } from '@supabase/supabase-js';
+import { createEnhancedSupabaseClient, handleSupabaseError } from './errorHandler';
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.warn('Missing Supabase environment variables - check your .env file');
+}
+
+// Create a base Supabase instance
+const baseSupabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true
+  }
+});
+
+// Create enhanced instance with error handling
+export const supabase = createEnhancedSupabaseClient(baseSupabase, {
+  maxRetries: 3,
+  circuitBreakerOptions: {
+    failureThreshold: 5,
+    timeout: 60000, // 1 minute
+    resetTimeout: 30000 // 30 seconds
+  }
+});
+
+// Also export error handler for use in components
+export { handleSupabaseError };
+
+// Export base client for direct access when needed
+export { baseSupabase as supabaseBase };
+

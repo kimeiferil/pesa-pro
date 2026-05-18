@@ -1,0 +1,190 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 10 15 30;
+    --foreground: 248 250 252;
+
+    --card: 15 23 42;
+    --card-foreground: 248 250 252;
+
+    --popover: 15 23 42;
+    --popover-foreground: 248 250 252;
+
+    --primary: 16 185 129;
+    --primary-foreground: 6 78 59;
+
+    --secondary: 59 130 246;
+    --secondary-foreground: 30 58 138;
+
+    --muted: 30 41 59;
+    --muted-foreground: 100 116 139;
+
+    --accent: 245 158 11;
+    --accent-foreground: 120 53 15;
+
+    --destructive: 239 68 68;
+    --destructive-foreground: 254 242 242;
+
+    --border: 30 41 59;
+    --input: 30 41 59;
+    --ring: 16 185 129;
+
+    --radius: 0.75rem;
+  }
+
+  *,
+  *::before,
+  *::after {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    /* Note: don't mix @apply bg-background with an inline background override —
+       the inline value wins but the @apply adds an unnecessary specificity fight.
+       Use one or the other; here we use the concrete gradient. */
+    @apply text-foreground antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: linear-gradient(160deg, #080d1a 0%, #0b1120 50%, #080d1a 100%);
+    min-height: 100vh;
+  }
+
+  /* Thin emerald scrollbar */
+  ::-webkit-scrollbar        { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track  { background: transparent; }
+  ::-webkit-scrollbar-thumb  {
+    background: rgba(16, 185, 129, 0.25);
+    border-radius: 99px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(16, 185, 129, 0.45);
+  }
+
+  /* Remove autofill browser styling */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus {
+    -webkit-box-shadow: 0 0 0 1000px rgb(15, 23, 42) inset;
+    -webkit-text-fill-color: rgb(248, 250, 252);
+    caret-color: rgb(248, 250, 252);
+    transition: background-color 5000s ease-in-out 0s;
+  }
+
+  /* Focus-visible ring (keyboard nav only) */
+  :focus-visible {
+    outline: 2px solid rgba(16, 185, 129, 0.6);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Glass card */
+  .glass-card {
+    @apply backdrop-blur-xl rounded-2xl shadow-xl;
+    background: rgba(15, 23, 42, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+  }
+
+  /* Flat surface card */
+  .surface {
+    background: rgb(15, 23, 42);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius);
+  }
+
+  /* Primary button */
+  .btn-primary {
+    @apply font-bold py-3 px-6 rounded-xl transition-all duration-200 inline-flex items-center justify-center gap-2;
+    background: rgb(16, 185, 129);
+    color: rgb(6, 78, 59);
+    box-shadow: 0 4px 24px rgba(16, 185, 129, 0.22);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: rgb(5, 150, 105);
+    box-shadow: 0 4px 32px rgba(16, 185, 129, 0.35);
+    transform: translateY(-1px);
+  }
+  .btn-primary:active:not(:disabled) {
+    transform: translateY(0);
+  }
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Ghost / secondary button */
+  .btn-ghost {
+    @apply font-semibold py-2.5 px-5 rounded-xl transition-all duration-200 inline-flex items-center justify-center gap-2;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: rgb(148, 163, 184);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.14);
+    color: rgb(248, 250, 252);
+  }
+  .btn-ghost:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* Stat/metric badge */
+  .badge-emerald {
+    @apply inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full;
+    color: rgb(16, 185, 129);
+    background: rgba(16, 185, 129, 0.10);
+    border: 1px solid rgba(16, 185, 129, 0.20);
+  }
+
+  /* Input field */
+  .field-input {
+    @apply w-full rounded-xl transition-all duration-200 text-sm;
+    padding: 13px 16px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1.5px solid rgba(255, 255, 255, 0.08);
+    color: rgb(248, 250, 252);
+    font-family: inherit;
+  }
+  .field-input::placeholder {
+    color: rgb(51, 65, 85);
+  }
+  .field-input:focus {
+    outline: none;
+    border-color: rgba(59, 130, 246, 0.5);
+    background: rgba(255, 255, 255, 0.05);
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Fade-in animation utility */
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease forwards;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.5; }
+  }
+}

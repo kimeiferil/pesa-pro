@@ -1,0 +1,754 @@
+﻿import { useState, useEffect, useCallback } from 'react';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
+import { useQuery } from '@tanstack/react-query';
+
+/* ─────────────────────────────────────────────
+   DESIGN TOKENS
+───────────────────────────────────────────── */
+const C = {
+  bg:       '#060810',
+  surface:  '#0c1120',
+  surface2: '#111827',
+  surface3: '#1a2438',
+  border:   'rgba(255,255,255,0.06)',
+  borderHi: 'rgba(255,255,255,0.14)',
+  text:     '#eef2ff',
+  muted:    '#4b5a7a',
+  sub:      '#7d8fb3',
+  green:    '#22d3a5',
+  blue:     '#60a5fa',
+  amber:    '#fbbf24',
+  red:      '#f87171',
+  indigo:   '#818cf8',
+};
+
+const PLAN_COLOR: Record<string, string> = {
+  basic:   C.muted,
+  pro:     C.blue,
+  premium: C.amber,
+};
+
+/* ─────────────────────────────────────────────
+   HELPERS
+───────────────────────────────────────────── */
+const fmtDate = (d: any) =>
+  d ? new Date(d).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
+const kes = (n: number) => `KES ${(n || 0).toLocaleString('en-KE')}`;
+
+/* ─────────────────────────────────────────────
+   TINY UI COMPONENTS
+───────────────────────────────────────────── */
+function Badge({ label, color }: { label: string; color: string }) {
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 800, padding: '3px 9px', borderRadius: 20,
+      background: `${color}20`, color, textTransform: 'uppercase' as const,
+      letterSpacing: '0.05em', whiteSpace: 'nowrap' as const, border: `1px solid ${color}35`,
+    }}>
+      {label}
+    </span>
+  );
+}
+
+function StatCard({ label, value, color, sub }: any) {
+  return (
+    <div style={{
+      background: C.surface, border: `1px solid ${C.border}`,
+      borderRadius: 14, padding: '16px 18px',
+    }}>
+      <p style={{ margin: '0 0 8px', fontSize: 11, color: C.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+        {label}
+      </p>
+      <p style={{ margin: 0, fontSize: 26, fontWeight: 900, color, letterSpacing: '-0.5px' }}>{value}</p>
+      {sub && <p style={{ margin: '4px 0 0', fontSize: 11, color: C.muted }}>{sub}</p>}
+    </div>
+  );
+}
+
+function Pill({ label, active, onClick, count }: any) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: '7px 16px', borderRadius: 30,
+        background: active ? C.indigo : 'transparent',
+        border: `1px solid ${active ? C.indigo : C.border}`,
+        color: active ? '#fff' : C.sub,
+        fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+        display: 'flex', alignItems: 'center', gap: 6, transition: 'all .15s',
+      }}
+    >
+      {label}
+      {count !== undefined && (
+        <span style={{
+          background: active ? 'rgba(255,255,255,0.25)' : C.surface3,
+          color: active ? '#fff' : C.muted,
+          borderRadius: 20, padding: '1px 7px', fontSize: 10, fontWeight: 800,
+        }}>
+          {count}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function ConfirmModal({ message, onConfirm, onCancel, danger }: any) {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+      backdropFilter: 'blur(6px)', zIndex: 600,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+    }}>
+      <div style={{
+        background: C.surface, border: `1px solid ${C.borderHi}`,
+        borderRadius: 18, width: '100%', maxWidth: 380, padding: 24,
+      }}>
+        <p style={{ margin: '0 0 20px', fontSize: 14, color: C.text, lineHeight: 1.7 }}>{message}</p>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={onCancel} style={{
+            flex: 1, padding: '10px', background: 'transparent',
+            border: `1px solid ${C.border}`, borderRadius: 10,
+            color: C.sub, fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
+          }}>
+            Cancel
+          </button>
+          <button onClick={onConfirm} style={{
+            flex: 1, padding: '10px',
+            background: danger ? C.red : C.green,
+            border: 'none', borderRadius: 10,
+            color: danger ? '#fff' : '#011a10', fontWeight: 800, fontSize: 13,
+            cursor: 'pointer', fontFamily: 'inherit',
+          }}>
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
+   GLOBAL CSS
+───────────────────────────────────────────── */
+const CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=Outfit:wght@400;500;600;700;800;900&display=swap');
+  *, *::before, *::after { box-sizing: border-box; }
+  .ap-root { font-family: 'Outfit', sans-serif; background: ${C.bg}; color: ${C.text}; min-height: 100vh; }
+  .ap-row { transition: background .12s; }
+  .ap-row:hover { background: rgba(255,255,255,0.025); }
+  input:focus, select:focus { outline: none; border-color: ${C.indigo} !important; }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .fade-in { animation: fadeIn .22s ease forwards; }
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+`;
+
+/* ─────────────────────────────────────────────
+   MAIN COMPONENT
+───────────────────────────────────────────── */
+export default function AdminPanel() {
+  const { user, profile: myProfile } = useAuth();
+
+  // ── Guard: only show to admins ─────────────
+  const isAdmin = myProfile?.role === 'admin';
+
+  // ── UI state ───────────────────────────────
+  const [tab,       setTab]       = useState<'payments' | 'users'>('payments');
+  const [filter,    setFilter]    = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
+  const [search,    setSearch]    = useState('');
+  const [working,   setWorking]   = useState<string | null>(null);   // submission id being processed
+  const [confirm,   setConfirm]   = useState<null | { message: string; danger?: boolean; onConfirm: () => void }>(null);
+  const [planEdit,  setPlanEdit]  = useState<null | { userId: string; current: string }>(null);
+  const [toast,     setToast]     = useState<string | null>(null);
+
+  /* ── Load data with useQuery for offline support ── */
+  const { data: submissions = [], isLoading: loadingSubmissions, refetch: refetchSubmissions } = useQuery({
+    queryKey: ['admin_submissions'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('payment_submissions')
+        .select('*, profiles(email, full_name, plan, phone)')
+        .order('submitted_at', { ascending: false });
+      return data || [];
+    },
+    enabled: isAdmin,
+    staleTime: 1000 * 60 * 30, // 30 mins
+  });
+
+  const { data: users = [], isLoading: loadingUsers, refetch: refetchUsers } = useQuery({
+    queryKey: ['admin_users'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, phone, plan, role, is_active, created_at, last_login')
+        .order('created_at', { ascending: false });
+      return data || [];
+    },
+    enabled: isAdmin,
+    staleTime: 1000 * 60 * 30, // 30 mins
+  });
+
+  const loading = loadingSubmissions || loadingUsers;
+
+  /* ── Toast helper ── */
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  /* ── Approve payment ── */
+  const approvePayment = async (sub: any) => {
+    setWorking(sub.id);
+    try {
+      // 1. Update profile plan
+      const { error: planErr } = await supabase
+        .from('profiles')
+        .update({ plan: sub.plan_requested, updated_at: new Date().toISOString() })
+        .eq('id', sub.user_id);
+      if (planErr) throw planErr;
+
+      // 2. Mark submission approved
+      const { error: subErr, data: updatedSub } = await supabase
+        .from('payment_submissions')
+        .update({ status: 'approved', reviewed_at: new Date().toISOString() })
+        .eq('id', sub.id)
+        .select();
+
+      if (subErr) throw subErr;
+
+      if (!updatedSub || updatedSub.length === 0) {
+        throw new Error('Update failed: record not found or permission denied');
+      }
+
+      // 3. Refresh data
+      await Promise.all([refetchSubmissions(), refetchUsers()]);
+      showToast(`Approved — ${sub.profiles?.email} upgraded to ${sub.plan_requested}`);
+    } catch (e: any) {
+      alert('Error: ' + e.message);
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  /* ── Reject payment ── */
+  const rejectPayment = async (sub: any) => {
+    setWorking(sub.id);
+    try {
+      await supabase
+        .from('payment_submissions')
+        .update({ status: 'rejected', reviewed_at: new Date().toISOString() })
+        .eq('id', sub.id);
+
+      await refetchSubmissions();
+      showToast('Payment rejected');
+    } catch (e: any) {
+      alert('Error: ' + e.message);
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  /* ── Manual plan change ── */
+  const updateUserPlan = async (userId: string, newPlan: string) => {
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ plan: newPlan, updated_at: new Date().toISOString() })
+        .eq('id', userId);
+      if (error) throw error;
+
+      await refetchUsers();
+      setPlanEdit(null);
+      showToast(`Plan updated to ${newPlan}`);
+    } catch (e: any) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  /* ── Toggle user active ── */
+  const toggleActive = async (u: any) => {
+    try {
+      await supabase.from('profiles').update({ is_active: !u.is_active }).eq('id', u.id);
+      await refetchUsers();
+      showToast(u.is_active ? 'User deactivated' : 'User activated');
+    } catch (e: any) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  /* ── Filtered lists ── */
+  const filteredSubs = submissions.filter(s => {
+    if (filter !== 'all' && s.status !== filter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return (
+        s.profiles?.email?.toLowerCase().includes(q) ||
+        s.profiles?.full_name?.toLowerCase().includes(q) ||
+        s.mpesa_code?.toLowerCase().includes(q) ||
+        s.phone?.includes(q)
+      );
+    }
+    return true;
+  });
+
+  const filteredUsers = users.filter(u => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      u.email?.toLowerCase().includes(q) ||
+      u.full_name?.toLowerCase().includes(q) ||
+      u.phone?.includes(q)
+    );
+  });
+
+  /* ── Stats ── */
+  const pending  = submissions.filter(s => s.status === 'pending').length;
+  const approved = submissions.filter(s => s.status === 'approved').length;
+  const revenue  = submissions.filter(s => s.status === 'approved').reduce((s, x) => s + (x.amount || 0), 0);
+  const proUsers = users.filter(u => u.plan === 'pro').length;
+  const premUsers = users.filter(u => u.plan === 'premium').length;
+
+  /* ── Guard renders ── */
+  if (isAdmin === false) {
+    return (
+      <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12 }}>
+        <style>{CSS}</style>
+        <p style={{ fontSize: 48 }}>🔒</p>
+        <p style={{ color: C.text, fontFamily: 'Outfit, sans-serif', fontWeight: 800, fontSize: 18 }}>Access Denied</p>
+        <p style={{ color: C.muted, fontFamily: 'Outfit, sans-serif', fontSize: 13 }}>You need admin role to view this page.</p>
+      </div>
+    );
+  }
+
+  // If isAdmin is null/undefined (still loading profile), we show a quick loader
+  if (loading && !myProfile) {
+    return (
+      <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <p style={{ color: C.muted, fontFamily: 'Outfit, sans-serif' }}>Verifying permissions...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ap-root">
+      <style>{CSS}</style>
+
+      {/* ── Toast ─────────────────────────────── */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+          background: C.green, color: '#011a10', padding: '10px 22px', borderRadius: 30,
+          fontWeight: 800, fontSize: 13, zIndex: 700, whiteSpace: 'nowrap',
+          boxShadow: `0 8px 32px ${C.green}44`,
+        }}>
+          {toast}
+        </div>
+      )}
+
+      {/* ── Confirm modal ─────────────────────── */}
+      {confirm && (
+        <ConfirmModal
+          message={confirm.message}
+          danger={confirm.danger}
+          onConfirm={() => { confirm.onConfirm(); setConfirm(null); }}
+          onCancel={() => setConfirm(null)}
+        />
+      )}
+
+      {/* ── Plan edit modal ───────────────────── */}
+      {planEdit && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+          backdropFilter: 'blur(6px)', zIndex: 600,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+        }}>
+          <div style={{
+            background: C.surface, border: `1px solid ${C.borderHi}`,
+            borderRadius: 18, width: '100%', maxWidth: 340, padding: 24,
+          }}>
+            <p style={{ margin: '0 0 6px', fontWeight: 800, fontSize: 15, color: C.text }}>Change Plan</p>
+            <p style={{ margin: '0 0 18px', fontSize: 12, color: C.muted }}>
+              Current: <strong style={{ color: PLAN_COLOR[planEdit.current] }}>{planEdit.current}</strong>
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+              {['basic', 'pro', 'premium'].map(p => (
+                <button
+                  key={p}
+                  onClick={() => updateUserPlan(planEdit.userId, p)}
+                  style={{
+                    padding: '11px 16px', borderRadius: 11, border: `1px solid ${PLAN_COLOR[p]}40`,
+                    background: planEdit.current === p ? `${PLAN_COLOR[p]}20` : 'transparent',
+                    color: PLAN_COLOR[p], fontWeight: 800, fontSize: 13, cursor: 'pointer',
+                    fontFamily: 'inherit', textAlign: 'left', textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                  }}
+                >
+                  {planEdit.current === p ? '✓ ' : ''}{p}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setPlanEdit(null)}
+              style={{
+                width: '100%', padding: '10px', background: 'transparent',
+                border: `1px solid ${C.border}`, borderRadius: 10,
+                color: C.sub, fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Header ────────────────────────────── */}
+      <header style={{
+        position: 'sticky', top: 0, zIndex: 100,
+        background: 'rgba(6,8,16,0.96)', backdropFilter: 'blur(20px)',
+        borderBottom: `1px solid ${C.border}`,
+      }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 20px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              width: 32, height: 32, borderRadius: 8,
+              background: 'linear-gradient(135deg, #818cf8, #60a5fa)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 14, fontWeight: 900, color: '#fff',
+            }}>
+              A
+            </div>
+            <div>
+              <p style={{ margin: 0, fontWeight: 900, fontSize: 14, color: C.text }}>Pesa Pro Admin</p>
+              <p style={{ margin: 0, fontSize: 10, color: C.muted }}>Control Panel</p>
+            </div>
+          </div>
+
+          {/* Search */}
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search users, emails, M-Pesa codes..."
+            style={{
+              flex: 1, maxWidth: 380, padding: '8px 14px',
+              background: C.surface2, border: `1px solid ${C.border}`,
+              borderRadius: 10, color: C.text, fontSize: 13, fontFamily: 'inherit',
+            }}
+          />
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {pending > 0 && (
+              <div style={{
+                background: `${C.amber}20`, border: `1px solid ${C.amber}35`,
+                borderRadius: 20, padding: '4px 12px', fontSize: 12, color: C.amber, fontWeight: 700,
+              }}>
+                {pending} pending
+              </div>
+            )}
+            <button
+              onClick={() => { loadSubmissions(); loadUsers(); showToast('Refreshed'); }}
+              style={{
+                background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 9,
+                padding: '7px 13px', color: C.sub, fontSize: 12, fontWeight: 700,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '20px 20px 80px' }}>
+
+        {/* ── Stats row ─────────────────────────── */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 24 }} className="fade-in">
+          <StatCard label="Pending Reviews" value={pending.toString()}   color={pending > 0 ? C.amber : C.muted} sub="Awaiting approval" />
+          <StatCard label="Total Approved"  value={approved.toString()}  color={C.green}  sub="All time" />
+          <StatCard label="Revenue"         value={kes(revenue)}         color={C.indigo} sub="Approved payments" />
+          <StatCard label="Pro Users"       value={proUsers.toString()}  color={C.blue}   sub={`${premUsers} premium`} />
+          <StatCard label="Total Users"     value={users.length.toString()} color={C.sub} sub={`${users.filter(u => u.is_active).length} active`} />
+        </div>
+
+        {/* ── Tab switcher ───────────────────────── */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+          <Pill
+            label="Payment Submissions"
+            active={tab === 'payments'}
+            count={submissions.length}
+            onClick={() => { setTab('payments'); setSearch(''); }}
+          />
+          <Pill
+            label="All Users"
+            active={tab === 'users'}
+            count={users.length}
+            onClick={() => { setTab('users'); setSearch(''); }}
+          />
+        </div>
+
+        {/* ══ PAYMENTS TAB ════════════════════════ */}
+        {tab === 'payments' && (
+          <div className="fade-in">
+            {/* Status filter */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+              {(['pending', 'approved', 'rejected', 'all'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  style={{
+                    padding: '5px 14px', borderRadius: 20, border: `1px solid ${filter === f ? C.indigo : C.border}`,
+                    background: filter === f ? `${C.indigo}20` : 'transparent',
+                    color: filter === f ? C.indigo : C.muted,
+                    fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                    textTransform: 'capitalize',
+                  }}
+                >
+                  {f} {f !== 'all' && `(${submissions.filter(s => s.status === f).length})`}
+                </button>
+              ))}
+            </div>
+
+            {loading
+              ? <p style={{ color: C.muted, textAlign: 'center', padding: 48 }}>Loading...</p>
+              : filteredSubs.length === 0
+                ? (
+                  <div style={{ textAlign: 'center', padding: '48px 20px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16 }}>
+                    <p style={{ color: C.text, fontWeight: 700, fontSize: 15, margin: '0 0 8px' }}>No submissions</p>
+                    <p style={{ color: C.muted, fontSize: 13, margin: 0 }}>
+                      {filter === 'pending' ? 'No pending payments to review.' : `No ${filter} submissions found.`}
+                    </p>
+                  </div>
+                )
+                : (
+                  <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: 'hidden' }}>
+                    {/* Table header */}
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 1fr 100px 90px 100px 80px 160px',
+                      padding: '10px 18px', borderBottom: `1px solid ${C.border}`,
+                      fontSize: 10, fontWeight: 800, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.07em',
+                    }}>
+                      <span>User</span>
+                      <span>M-Pesa Code</span>
+                      <span>Amount</span>
+                      <span>Plan</span>
+                      <span>Status</span>
+                      <span>Submitted</span>
+                      <span style={{ textAlign: 'right' }}>Actions</span>
+                    </div>
+
+                    {filteredSubs.map((s, i) => {
+                      const isWorking = working === s.id;
+                      return (
+                        <div
+                          key={s.id}
+                          className="ap-row"
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 1fr 100px 90px 100px 80px 160px',
+                            padding: '13px 18px',
+                            borderBottom: i < filteredSubs.length - 1 ? `1px solid ${C.border}` : 'none',
+                            alignItems: 'center', gap: 8,
+                          }}
+                        >
+                          {/* User */}
+                          <div style={{ minWidth: 0 }}>
+                            <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {s.profiles?.full_name || 'Unknown'}
+                            </p>
+                            <p style={{ margin: '2px 0 0', fontSize: 11, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {s.profiles?.email || s.phone}
+                            </p>
+                          </div>
+
+                          {/* M-Pesa code */}
+                          <div>
+                            <p className="mono" style={{ margin: 0, fontSize: 12, color: C.green, fontWeight: 700, letterSpacing: '0.03em' }}>
+                              {s.mpesa_code}
+                            </p>
+                            <p style={{ margin: '2px 0 0', fontSize: 10, color: C.muted }}>{s.phone}</p>
+                          </div>
+
+                          {/* Amount */}
+                          <p style={{ margin: 0, fontWeight: 800, fontSize: 13, color: C.text }}>{kes(s.amount)}</p>
+
+                          {/* Requested plan */}
+                          <Badge label={s.plan_requested} color={PLAN_COLOR[s.plan_requested] || C.muted} />
+
+                          {/* Status */}
+                          <Badge
+                            label={s.status}
+                            color={s.status === 'approved' ? C.green : s.status === 'rejected' ? C.red : C.amber}
+                          />
+
+                          {/* Date */}
+                          <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
+                            {fmtDate(s.submitted_at).split(',')[0]}
+                          </p>
+
+                          {/* Actions */}
+                          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                            {s.status === 'pending' && (
+                              <>
+                                <button
+                                  disabled={isWorking}
+                                  onClick={() => setConfirm({
+                                    message: `Approve ${kes(s.amount)} payment from ${s.profiles?.email || s.phone}? This will upgrade their plan to ${s.plan_requested}.`,
+                                    onConfirm: () => approvePayment(s),
+                                  })}
+                                  style={{
+                                    padding: '5px 12px', background: `${C.green}20`,
+                                    border: `1px solid ${C.green}35`, borderRadius: 8,
+                                    color: C.green, fontSize: 11, fontWeight: 800,
+                                    cursor: isWorking ? 'not-allowed' : 'pointer',
+                                    fontFamily: 'inherit', opacity: isWorking ? 0.5 : 1,
+                                  }}
+                                >
+                                  {isWorking ? '...' : 'Approve'}
+                                </button>
+                                <button
+                                  disabled={isWorking}
+                                  onClick={() => setConfirm({
+                                    message: `Reject this payment from ${s.profiles?.email || s.phone}? Their plan will not change.`,
+                                    danger: true,
+                                    onConfirm: () => rejectPayment(s),
+                                  })}
+                                  style={{
+                                    padding: '5px 12px', background: `${C.red}15`,
+                                    border: `1px solid ${C.red}30`, borderRadius: 8,
+                                    color: C.red, fontSize: 11, fontWeight: 800,
+                                    cursor: isWorking ? 'not-allowed' : 'pointer',
+                                    fontFamily: 'inherit', opacity: isWorking ? 0.5 : 1,
+                                  }}
+                                >
+                                  Reject
+                                </button>
+                              </>
+                            )}
+                            {s.status !== 'pending' && (
+                              <span style={{ fontSize: 11, color: C.muted }}>
+                                {fmtDate(s.reviewed_at).split(',')[0]}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+            }
+          </div>
+        )}
+
+        {/* ══ USERS TAB ═══════════════════════════ */}
+        {tab === 'users' && (
+          <div className="fade-in">
+            {loading
+              ? <p style={{ color: C.muted, textAlign: 'center', padding: 48 }}>Loading...</p>
+              : (
+                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: 'hidden' }}>
+                  {/* Table header */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 140px 90px 80px 140px 180px',
+                    padding: '10px 18px', borderBottom: `1px solid ${C.border}`,
+                    fontSize: 10, fontWeight: 800, color: C.muted,
+                    textTransform: 'uppercase', letterSpacing: '0.07em',
+                  }}>
+                    <span>User</span>
+                    <span>Phone</span>
+                    <span>Plan</span>
+                    <span>Status</span>
+                    <span>Joined</span>
+                    <span style={{ textAlign: 'right' }}>Actions</span>
+                  </div>
+
+                  {filteredUsers.length === 0 && (
+                    <p style={{ textAlign: 'center', padding: '40px 20px', color: C.muted, fontSize: 13 }}>No users found</p>
+                  )}
+
+                  {filteredUsers.map((u, i) => (
+                    <div
+                      key={u.id}
+                      className="ap-row"
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 140px 90px 80px 140px 180px',
+                        padding: '13px 18px',
+                        borderBottom: i < filteredUsers.length - 1 ? `1px solid ${C.border}` : 'none',
+                        alignItems: 'center', gap: 8,
+                      }}
+                    >
+                      {/* User */}
+                      <div style={{ minWidth: 0 }}>
+                        <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {u.full_name || 'No name'}
+                          {u.role === 'admin' && (
+                            <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 800, color: C.indigo, background: `${C.indigo}20`, padding: '1px 6px', borderRadius: 10, textTransform: 'uppercase' }}>
+                              admin
+                            </span>
+                          )}
+                        </p>
+                        <p style={{ margin: '2px 0 0', fontSize: 11, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {u.email}
+                        </p>
+                      </div>
+
+                      {/* Phone */}
+                      <p className="mono" style={{ margin: 0, fontSize: 11, color: C.sub }}>{u.phone || '-'}</p>
+
+                      {/* Plan */}
+                      <Badge label={u.plan} color={PLAN_COLOR[u.plan] || C.muted} />
+
+                      {/* Active status */}
+                      <Badge label={u.is_active ? 'Active' : 'Off'} color={u.is_active ? C.green : C.red} />
+
+                      {/* Joined */}
+                      <p style={{ margin: 0, fontSize: 11, color: C.muted }}>{fmtDate(u.created_at).split(',')[0]}</p>
+
+                      {/* Actions */}
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => setPlanEdit({ userId: u.id, current: u.plan })}
+                          style={{
+                            padding: '5px 11px', background: `${PLAN_COLOR[u.plan]}15`,
+                            border: `1px solid ${PLAN_COLOR[u.plan]}30`, borderRadius: 8,
+                            color: PLAN_COLOR[u.plan], fontSize: 11, fontWeight: 800,
+                            cursor: 'pointer', fontFamily: 'inherit',
+                          }}
+                        >
+                          Change Plan
+                        </button>
+                        {u.role !== 'admin' && (
+                          <button
+                            onClick={() => setConfirm({
+                              message: `${u.is_active ? 'Deactivate' : 'Activate'} ${u.email}?`,
+                              danger: u.is_active,
+                              onConfirm: () => toggleActive(u),
+                            })}
+                            style={{
+                              padding: '5px 11px',
+                              background: u.is_active ? `${C.red}12` : `${C.green}12`,
+                              border: `1px solid ${u.is_active ? C.red : C.green}30`,
+                              borderRadius: 8,
+                              color: u.is_active ? C.red : C.green,
+                              fontSize: 11, fontWeight: 800,
+                              cursor: 'pointer', fontFamily: 'inherit',
+                            }}
+                          >
+                            {u.is_active ? 'Deactivate' : 'Activate'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            }
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
