@@ -30,7 +30,11 @@ import MfaSetup          from './pages/MfaSetup';
 import MfaChallenge      from './pages/MfaChallenge';
 import ChamaManager      from './features/chama/ChamaManager';
 import SettingsPage      from './pages/SettingsPage';
-import AdminPanel       from './pages/AdminPanel';
+import AdminPanel        from './pages/AdminPanel';
+
+// Update service
+import { updateService } from './services/updateService';
+import type { AppVersion } from './services/updateService';
 
 // Plan & payment
 import { useUserPlan }            from './hooks/useUserPlan';
@@ -45,15 +49,6 @@ import { useQuery } from '@tanstack/react-query';
 // --- App Version ---------------------------------------------------------------
 const APP_VERSION = '1.0.0'; // Bump this with each release
 
-interface AppVersion {
-  id: string;
-  version: string;
-  is_required: boolean;
-  changelog: string;
-  download_url: string | null;
-  release_date: string;
-}
-
 function useAppVersionCheck() {
   const [updateInfo, setUpdateInfo] = useState<AppVersion | null>(null);
   const [dismissed,  setDismissed]  = useState(false);
@@ -61,30 +56,58 @@ function useAppVersionCheck() {
   useEffect(() => {
     const check = async () => {
       try {
-        const { data } = await supabase
-          .from('app_versions')
-          .select('*')
-          .order('release_date', { ascending: false })
-          .limit(1)
-          .single();
+        const result = await updateService.checkForUpdates();
 
-        if (!data) return;
+        if (!result.hasUpdate) return;
 
-        // Compare versions â€” simple semver string compare is enough here
-        const isNewer = data.version.localeCompare(APP_VERSION, undefined, { numeric: true, sensitivity: 'base' }) > 0;
-        if (isNewer) setUpdateInfo(data as AppVersion);
+        // Don't show if user already acknowledged this version
+        if (updateService.hasSeenUpdate(result.latestVersion ?? '')) return;
+
+        // Don't show if user deferred the reminder and it's still active
+        if (updateService.isUpdateDeferred()) return;
+
+        setUpdateInfo({
+          id:           '',
+          version:      result.latestVersion!,
+          is_required:  result.isRequired,
+          changelog:    result.changelog ?? '',
+          download_url: result.downloadUrl,
+          release_date: result.releaseDate ?? '',
+          created_at:   '',
+        });
       } catch {
-        // silently ignore â€” don't break the app if version check fails
+        // Silently ignore — don't break the app if version check fails
       }
     };
     check();
   }, []);
 
-  return { updateInfo, dismissed, dismiss: () => setDismissed(true) };
+  const dismiss = () => {
+    // Defer for 24h so banner stays hidden across reloads
+    updateService.deferUpdateReminder(24);
+    setDismissed(true);
+  };
+
+  const acknowledge = () => {
+    if (updateInfo?.version) {
+      updateService.acknowledgeUpdate(updateInfo.version);
+    }
+    setDismissed(true);
+  };
+
+  return { updateInfo, dismissed, dismiss, acknowledge };
 }
 
 // --- Update Banner ------------------------------------------------------------
-function UpdateBanner({ info, onDismiss }: { info: AppVersion; onDismiss: () => void }) {
+function UpdateBanner({
+  info,
+  onDismiss,
+  onAcknowledge,
+}: {
+  info: AppVersion;
+  onDismiss: () => void;
+  onAcknowledge: () => void;
+}) {
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9000,
@@ -95,8 +118,10 @@ function UpdateBanner({ info, onDismiss }: { info: AppVersion; onDismiss: () => 
       boxShadow: '0 2px 16px rgba(16,185,129,0.4)',
     }}>
       <span>
-        ðŸš€ Pesa Pro v{info.version} is available!
-        {info.is_required && <strong style={{ marginLeft: 8 }}>Update required.</strong>}
+        🚀 Pesa Pro v{info.version} is available!
+        {info.is_required && (
+          <strong style={{ marginLeft: 8 }}>Update required.</strong>
+        )}
       </span>
       <div style={{ display: 'flex', gap: 8 }}>
         {info.download_url && (
@@ -104,6 +129,7 @@ function UpdateBanner({ info, onDismiss }: { info: AppVersion; onDismiss: () => 
             href={info.download_url}
             target="_blank"
             rel="noreferrer"
+            onClick={onAcknowledge}
             style={{
               padding: '5px 14px', background: '#022c22', color: '#10b981',
               borderRadius: 8, textDecoration: 'none', fontWeight: 800, fontSize: 12,
@@ -127,6 +153,7 @@ function UpdateBanner({ info, onDismiss }: { info: AppVersion; onDismiss: () => 
     </div>
   );
 }
+
 // --- Query Client & Persistence -----------------------------------------------
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -198,7 +225,7 @@ const GlobalLoader = () => (
   </div>
 );
 
-// --- Supabase row â†’ ParsedTransaction -----------------------------------------
+// --- Supabase row → ParsedTransaction -----------------------------------------
 function rowToTransaction(row: Record<string, unknown>): ParsedTransaction {
   return {
     transaction_code: (row.txn_id            as string | null)             ?? null,
@@ -263,9 +290,8 @@ function useTransactions() {
       return all;
     },
     enabled: !!user,
-    // Persistence settings
-    staleTime: 1000 * 60 * 60 * 24, // 24 hours
-    gcTime: 1000 * 60 * 60 * 24 * 7, // 7 days
+    staleTime: 1000 * 60 * 60 * 24,
+    gcTime: 1000 * 60 * 60 * 24 * 7,
   });
 
   // Real-time subscription
@@ -288,7 +314,7 @@ function useTransactions() {
     transactions,
     loading: isLoading,
     error: error instanceof Error ? error.message : null,
-    refetch
+    refetch,
   };
 }
 
@@ -305,11 +331,8 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function DashboardRoute({ transactions }: { transactions: ParsedTransaction[] }) {
   const { user } = useAuth();
   const navigate = useNavigate();
-
-  // Real-time plan from Supabase â€” updates instantly when you change it in the console
   const { plan } = useUserPlan(user?.id);
 
-  // Upgrade modal state
   const [upgradeModal, setUpgradeModal] = useState<{
     open: boolean;
     plan: Exclude<Plan, 'basic'>;
@@ -327,8 +350,6 @@ function DashboardRoute({ transactions }: { transactions: ParsedTransaction[] })
           navigate('/login', { replace: true });
         }}
         onNavigate={(page) => {
-          // Handle absolute paths (e.g. '/settings', '/mfa') directly;
-          // handle page-name shorthands (e.g. 'transactions') with a leading slash.
           if (page.startsWith('/')) {
             navigate(page);
           } else {
@@ -405,11 +426,10 @@ function AppShell({ children }: { children: React.ReactNode }) {
 function AppRoutes() {
   const { user, loading } = useAuth();
   const { transactions, error: txnError, refetch } = useTransactions();
-  const { updateInfo, dismissed, dismiss } = useAppVersionCheck();
+  const { updateInfo, dismissed, dismiss, acknowledge } = useAppVersionCheck();
 
-  // Re-fetch when Android app resumes from background
+  // Re-fetch when app resumes or comes online
   useEffect(() => {
-    // Process offline queue whenever app starts or becomes online
     const handleSync = () => {
       if (navigator.onLine) {
         processSyncQueue().then(count => {
@@ -449,8 +469,16 @@ function AppRoutes() {
 
   return (
     <AppShell>
-      {updateInfo && !dismissed && <UpdateBanner info={updateInfo} onDismiss={dismiss} />}
-            {/* Non-blocking error banner (only if no data) */}
+      {/* Update banner — hidden for 24h after "Later", permanently after "Download" */}
+      {updateInfo && !dismissed && (
+        <UpdateBanner
+          info={updateInfo}
+          onDismiss={dismiss}
+          onAcknowledge={acknowledge}
+        />
+      )}
+
+      {/* Non-blocking error banner */}
       {txnError && transactions.length === 0 && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, zIndex: 8888,
@@ -519,4 +547,3 @@ export default function App() {
     </PersistQueryClientProvider>
   );
 }
-
