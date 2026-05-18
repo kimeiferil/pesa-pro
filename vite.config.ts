@@ -6,10 +6,18 @@ import path from "path";
 export default defineConfig({
   build: {
     chunkSizeWarningLimit: 600,
-    rollupOptions: { output: { manualChunks: { 'pdf-libs': ['jspdf','html2canvas'], 'vendor': ['react','react-dom'] } } },
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("jspdf") || id.includes("html2canvas")) return "pdf-libs";
+          if (id.includes("node_modules/react-dom") || id.includes("node_modules/react/")) return "vendor";
+          if (id.includes("dompurify")) return "dompurify";
+        },
+      },
+    },
   },
   define: {
-    'process.env': {},
+    "process.env": {},
   },
   plugins: [
     react(),
@@ -28,4 +36,3 @@ export default defineConfig({
     },
   },
 });
-
