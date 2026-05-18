@@ -25,6 +25,7 @@ export interface UpdateCheckResult {
   currentVersion: string;
   changelog: string | null;
   downloadUrl: string | null;
+  releaseDate: string | null;
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -81,6 +82,7 @@ class UpdateService {
         currentVersion: APP_VERSION,
         changelog: null,
         downloadUrl: null,
+        releaseDate: null,
       };
     }
 
@@ -93,6 +95,7 @@ class UpdateService {
       currentVersion: APP_VERSION,
       changelog: hasUpdate ? latest.changelog : null,
       downloadUrl: hasUpdate ? latest.download_url : null,
+      releaseDate: hasUpdate ? latest.release_date : null,
     };
   }
 
