@@ -4,6 +4,10 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
 export default defineConfig({
+  build: {
+    chunkSizeWarningLimit: 600,
+    rollupOptions: { output: { manualChunks: { 'pdf-libs': ['jspdf','html2canvas'], 'vendor': ['react','react-dom'] } } },
+  },
   define: {
     'process.env': {},
   },
@@ -24,3 +28,4 @@ export default defineConfig({
     },
   },
 });
+
