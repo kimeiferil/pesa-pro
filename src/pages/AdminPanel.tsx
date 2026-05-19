@@ -332,7 +332,7 @@ export default function AdminPanel() {
     return (
       <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12 }}>
         <style>{CSS}</style>
-        <p style={{ fontSize: 48 }}>ðŸ”’</p>
+        <p style={{ fontSize: 48 }}>🔒</p>
         <p style={{ color: C.text, fontFamily: 'Outfit, sans-serif', fontWeight: 800, fontSize: 18 }}>Access Denied</p>
         <p style={{ color: C.muted, fontFamily: 'Outfit, sans-serif', fontSize: 13 }}>You need admin role to view this page.</p>
       </div>

@@ -122,7 +122,7 @@ export default function ImportMessage() {
         },
         () => {
           setSmsPermission('denied');
-          setError('SMS permission denied. Please allow in Android Settings â†’ Apps â†’ Pesa Pro â†’ Permissions.');
+          setError('SMS permission denied. Please allow in Android Settings → Apps → Pesa Pro → Permissions.');
           setSyncing(false);
         }
       );
@@ -709,7 +709,7 @@ export default function ImportMessage() {
                       }
                       style={{ marginLeft: 'auto', padding: '8px 18px', background: C.primary, color: '#022c22', border: 'none', borderRadius: 9, fontWeight: 800, fontSize: 13, cursor: 'pointer' }}
                     >
-                      {bulkCampaignId ? 'View Contributions â†’' : 'View Transactions â†’'}
+                      {bulkCampaignId ? 'View Contributions →' : 'View Transactions →'}
                     </button>
                   )}
                 </div>
