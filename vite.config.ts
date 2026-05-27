@@ -1,38 +1,39 @@
-﻿import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
-import path from "path";
+﻿import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import path from 'path'
 
 export default defineConfig({
+  plugins: [react()],
+
+  resolve: {
+    alias: { '@': path.resolve(__dirname, './src') },
+  },
+
+  optimizeDeps: {
+    exclude: ['pdfjs-dist'] as string[],
+  },
+
   build: {
-    chunkSizeWarningLimit: 600,
+    target: 'es2015',
+    sourcemap: false,
     rollupOptions: {
+      external: ['canvas'],
       output: {
-        manualChunks(id) {
-          if (id.includes("jspdf") || id.includes("html2canvas")) return "pdf-libs";
-          if (id.includes("node_modules/react-dom") || id.includes("node_modules/react/")) return "vendor";
-          if (id.includes("dompurify")) return "dompurify";
+        manualChunks(id: string) {
+          if (id.includes('pdfjs-dist'))          return 'pdfjs'
+          if (id.includes('react-router-dom'))    return 'react-vendor'
+          if (id.includes('react-dom') ||
+              id.includes('node_modules/react/')) return 'react-vendor'
+          if (id.includes('@supabase'))           return 'supabase'
+          if (id.includes('@tanstack'))           return 'query'
         },
       },
     },
+    chunkSizeWarningLimit: 2500,
   },
-  define: {
-    "process.env": {},
-  },
-  plugins: [
-    react(),
-    tailwindcss(),
-  ],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
-  },
+
   server: {
-    host: "0.0.0.0",
-    port: 3000,
-    watch: {
-      ignored: ["**/android/**", "**/ios/**", "**/node_modules/**"],
-    },
+    port: 5173,
+    strictPort: true,
   },
-});
+})

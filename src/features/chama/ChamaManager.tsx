@@ -1,4 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { usePlanGate } from '../../hooks/usePlanGate';
+import { useUserPlan  } from '../../hooks/useUserPlan';
+import { PLAN_LIMITS  } from '../../config/planLimits';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import autoTable from 'jspdf-autotable';
@@ -339,6 +342,11 @@ const CSS = `
 export default function ChamaManager() {
   const { user } = useAuth();
 
+  // ── Plan gating ───────────────────────────
+  const { plan }                   = useUserPlan(user?.id);
+  const { gate, check, closeGate } = usePlanGate(plan);
+  // ─────────────────────────────────────────
+
   // ── State ─────────────────────────────────
   const [chamas,        setChamas]        = useState<any[]>([]);
   const [selected,      setSelected]      = useState<any>(null);
@@ -472,6 +480,7 @@ export default function ChamaManager() {
 
   // ── CRUD actions ──────────────────────────
   const createChama = async () => {
+    if (!check('maxChamas', { currentCount: chamas.length, reason: 'Upgrade to create more Chamas.' })) return;
     if (!newChama.name || !newChama.contribution_amount) { setFormErr('Name and amount are required'); return; }
     setSaving(true); setFormErr('');
     try {
@@ -489,6 +498,7 @@ export default function ChamaManager() {
 
   const addMember = async () => {
     if (!newMember.name || !selected) return;
+    if (!check('chamaMembers', { currentCount: members.length, reason: 'Upgrade to add more members to this Chama.' })) return;
     setSaving(true);
     try {
       const { data, error } = await supabase.from('chama_members').insert([{
@@ -530,6 +540,7 @@ export default function ChamaManager() {
 
   const addLoan = async () => {
     if (!newLoan.member_id || !newLoan.principal || !selected) return;
+    if (!check('chamaLoans', { reason: 'Chama loans are available on the Pro plan.' })) return;
     setSaving(true);
     try {
       const { data, error } = await supabase.from('chama_loans').insert([{
@@ -568,6 +579,7 @@ export default function ChamaManager() {
 
   const addExpense = async () => {
     if (!newExpense.description || !newExpense.amount || !selected) return;
+    if (!check('chamaExpenses', { reason: 'Chama expense tracking is available on the Pro plan.' })) return;
     setSaving(true);
     try {
       const amount = parseFloat(newExpense.amount);
@@ -585,6 +597,7 @@ export default function ChamaManager() {
 
   const addMinutes = async () => {
     if (!newMinutes.title || !selected) return;
+    if (!check('chamaMinutes', { reason: 'Meeting minutes are available on the Pro plan.' })) return;
     setSaving(true);
     try {
       const { data, error } = await supabase.from('chama_minutes').insert([{
@@ -602,6 +615,7 @@ export default function ChamaManager() {
 
   const addPenalty = async () => {
     if (!newPenalty.member_id || !newPenalty.amount || !selected) return;
+    if (!check('chamaPenalties', { reason: 'Penalty management is available on the Pro plan.' })) return;
     setSaving(true);
     try {
       const { data, error } = await supabase.from('chama_penalties').insert([{
@@ -843,7 +857,7 @@ export default function ChamaManager() {
           >
             WhatsApp
           </button>
-          <button style={btnGhost} onClick={() => exportPDF(selected, members, contributions, loans)}>
+          <button style={btnGhost} onClick={() => { if (!check('chamaPDFExport', { reason: 'PDF export is available on the Pro plan.' })) return; void exportPDF(selected, members, contributions, loans); }}>
             PDF
           </button>
           <button style={{ ...btnGhost, color: C.red, borderColor: 'rgba(240,80,96,0.2)' }} onClick={() => openModal('deleteChama')}>
@@ -1692,6 +1706,47 @@ export default function ChamaManager() {
             {saving ? 'Saving...' : 'Record Repayment'}
           </button>
         </Modal>
+      )}
+
+      {/* Plan gate modal */}
+      {gate.open && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 999,
+            background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
+          }}
+          onClick={closeGate}
+        >
+          <div
+            style={{
+              background: C.surface, border: `1px solid ${C.borderHi}`,
+              borderRadius: 20, padding: 28, maxWidth: 380, width: '100%',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 900, color: C.text }}>
+              {gate.requiredPlan === 'premium' ? '✨ Premium Feature' : '⚡ Pro Feature'}
+            </p>
+            <p style={{ margin: '0 0 20px', fontSize: 13, color: C.muted, lineHeight: 1.6 }}>
+              {gate.reason}
+            </p>
+            {gate.limitCount != null && (
+              <p style={{ margin: '0 0 16px', fontSize: 12, color: C.amber }}>
+                {gate.currentCount} / {gate.limitCount} used
+              </p>
+            )}
+            <button
+              onClick={closeGate}
+              style={{
+                ...btnPrimary(gate.requiredPlan === 'premium' ? C.purple : C.green),
+                width: '100%', justifyContent: 'center', padding: '12px',
+              }}
+            >
+              Upgrade to {gate.requiredPlan === 'premium' ? 'Premium' : 'Pro'}
+            </button>
+          </div>
+        </div>
       )}
 
       {modal === 'deleteChama' && (

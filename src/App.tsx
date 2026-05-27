@@ -1,4 +1,5 @@
-﻿import React, { useEffect, useState, useCallback } from 'react';
+﻿// src/App.tsx
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   BrowserRouter as Router,
   Routes, Route, Navigate,
@@ -31,6 +32,7 @@ import MfaChallenge      from './pages/MfaChallenge';
 import ChamaManager      from './features/chama/ChamaManager';
 import SettingsPage      from './pages/SettingsPage';
 import AdminPanel        from './pages/AdminPanel';
+import MentorPage        from './pages/MentorPage';
 
 // Update service
 import { updateService } from './services/updateService';
@@ -38,16 +40,19 @@ import type { AppVersion } from './services/updateService';
 
 // Plan & payment
 import { useUserPlan }            from './hooks/useUserPlan';
+import { useBusinesses }          from './hooks/useBusinesses';
 import PaymentSubmissionModal     from './components/PaymentSubmissionModal';
 import type { Plan }              from './config/planLimits';
 
+import { queryClient } from './lib/queryClient';
 import type { ParsedTransaction } from './shared/mpesaParser';
+import { clearTransactions } from './features/transactions/transactionService';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister';
 import { useQuery } from '@tanstack/react-query';
 
 // --- App Version ---------------------------------------------------------------
-const APP_VERSION = '1.0.0'; // Bump this with each release
+const APP_VERSION = '1.0.3'; // Bump this with each release
 
 function useAppVersionCheck() {
   const [updateInfo, setUpdateInfo] = useState<AppVersion | null>(null);
@@ -57,15 +62,9 @@ function useAppVersionCheck() {
     const check = async () => {
       try {
         const result = await updateService.checkForUpdates();
-
         if (!result.hasUpdate) return;
-
-        // Don't show if user already acknowledged this version
         if (updateService.hasSeenUpdate(result.latestVersion ?? '')) return;
-
-        // Don't show if user deferred the reminder and it's still active
         if (updateService.isUpdateDeferred()) return;
-
         setUpdateInfo({
           id:           '',
           version:      result.latestVersion!,
@@ -83,15 +82,12 @@ function useAppVersionCheck() {
   }, []);
 
   const dismiss = () => {
-    // Defer for 24h so banner stays hidden across reloads
     updateService.deferUpdateReminder(24);
     setDismissed(true);
   };
 
   const acknowledge = () => {
-    if (updateInfo?.version) {
-      updateService.acknowledgeUpdate(updateInfo.version);
-    }
+    if (updateInfo?.version) updateService.acknowledgeUpdate(updateInfo.version);
     setDismissed(true);
   };
 
@@ -100,9 +96,7 @@ function useAppVersionCheck() {
 
 // --- Update Banner ------------------------------------------------------------
 function UpdateBanner({
-  info,
-  onDismiss,
-  onAcknowledge,
+  info, onDismiss, onAcknowledge,
 }: {
   info: AppVersion;
   onDismiss: () => void;
@@ -118,10 +112,8 @@ function UpdateBanner({
       boxShadow: '0 2px 16px rgba(16,185,129,0.4)',
     }}>
       <span>
-        🚀 Pesa Pro v{info.version} is available!
-        {info.is_required && (
-          <strong style={{ marginLeft: 8 }}>Update required.</strong>
-        )}
+        {"\u{1F4E2}"} Pesa Pro v{info.version} is available!
+        {info.is_required && <strong style={{ marginLeft: 8 }}>Update required.</strong>}
       </span>
       <div style={{ display: 'flex', gap: 8 }}>
         {info.download_url && (
@@ -154,21 +146,8 @@ function UpdateBanner({
   );
 }
 
-// --- Query Client & Persistence -----------------------------------------------
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60 * 60 * 24, // 24 hours
-      gcTime: 1000 * 60 * 60 * 24 * 7, // 7 days
-      retry: 3,
-      refetchOnWindowFocus: false,
-    },
-  },
-});
-
-const persister = createSyncStoragePersister({
-  storage: window.localStorage,
-});
+// --- Persistence --------------------------------------------------------------
+const persister = createSyncStoragePersister({ storage: window.localStorage });
 
 // --- Routes without nav -------------------------------------------------------
 const NO_NAV_ROUTES = ['/login', '/signup', '/mfa', '/verify', '/mfa-challenge'];
@@ -228,23 +207,27 @@ const GlobalLoader = () => (
 // --- Supabase row → ParsedTransaction -----------------------------------------
 function rowToTransaction(row: Record<string, unknown>): ParsedTransaction {
   return {
-    transaction_code: (row.txn_id            as string | null)             ?? null,
-    type:             (row.type              as ParsedTransaction['type'])  ?? 'unknown',
-    amount:           row.amount           != null ? Number(row.amount)           : null,
-    name:             (row.name              as string | null)             ?? null,
-    phone:            (row.phone             as string | null)             ?? null,
-    account:          (row.account           as string | null)             ?? null,
-    business:         (row.business          as string | null)             ?? null,
-    paybill:          (row.paybill           as string | null)             ?? null,
-    till:             (row.till              as string | null)             ?? null,
-    balance:          row.balance          != null ? Number(row.balance)          : null,
-    transaction_cost: row.transaction_cost != null ? Number(row.transaction_cost) : null,
-    date:             (row.txn_date          as string | null)             ?? null,
-    time:             (row.txn_time          as string | null)             ?? null,
-    category:         (row.category          as string)                    ?? 'other',
-    raw_text:         (row.raw_text          as string)                    ?? '',
-    confidence:       row.confidence       != null ? Number(row.confidence)       : 0,
-    needs_review:     Boolean(row.needs_review),
+    transaction_code:  ((row.txn_id || row.transaction_code) as string | null)?.trim() ?? null,
+    type:              (row.type              as ParsedTransaction['type']) ?? 'unknown',
+    direction:         ((row.type as string) === 'received' || (row.type as string) === 'deposit' || (row.type as string) === 'reversal') ? 'credit' as const : 'debit' as const,
+    amount:            row.amount           != null ? Number(row.amount)           : null,
+    name:              (row.name              as string | null)            ?? null,
+    phone:             (row.phone             as string | null)            ?? null,
+    account:           (row.account           as string | null)            ?? null,
+    business:          (row.business          as string | null)            ?? null,
+    paybill:           (row.paybill           as string | null)            ?? null,
+    till:              (row.till              as string | null)            ?? null,
+    balance:           row.balance          != null ? Number(row.balance)          : null,
+    transaction_cost:  row.transaction_cost != null ? Number(row.transaction_cost) : null,
+    fuliza_fee:        row.fuliza_fee       != null ? Number(row.fuliza_fee)       : null,
+    fuliza_total_due:  row.fuliza_total_due != null ? Number(row.fuliza_total_due) : null,
+    date:              (row.txn_date          as string | null)            ?? null,
+    time:              (row.txn_time          as string | null)            ?? null,
+    category:          (row.category          as string)                   ?? 'other',
+    raw_text:          (row.raw_text          as string)                   ?? '',
+    business_id:       (row.business_id       as string | null)            ?? null,
+    confidence:        row.confidence       != null ? Number(row.confidence)       : 0,
+    needs_review:      Boolean(row.needs_review),
   };
 }
 
@@ -253,67 +236,84 @@ function useTransactions() {
   const { user } = useAuth();
 
   const { data: transactions = [], isLoading, error, refetch } = useQuery({
-    queryKey: ['transactions', user?.id],
+    queryKey: ['transactions', user?.id ?? 'local'],
     queryFn: async () => {
-      if (!user) return [];
+      // 1. Get from Supabase if logged in
+      let remote: ParsedTransaction[] = [];
+      if (user) {
+        let page = 0;
+        const PAGE_SIZE = 1000;
+        let done = false;
 
-      let all: ParsedTransaction[] = [];
-      let page = 0;
-      const PAGE_SIZE = 1000;
-      let done = false;
+        while (!done) {
+          const from = page * PAGE_SIZE;
+          const to   = from + PAGE_SIZE - 1;
 
-      while (!done) {
-        const from = page * PAGE_SIZE;
-        const to   = from + PAGE_SIZE - 1;
+          const { data, error: qErr } = await supabase
+            .from('transactions')
+            .select(`
+              txn_id, transaction_code, type, amount, name, phone,
+              account, business, paybill, till,
+              balance, transaction_cost, fuliza_fee, fuliza_total_due,
+              txn_date, txn_time,
+              category, raw_text, business_id, confidence, needs_review
+            `)
+            .eq('user_id', user.id)
+            .order('txn_date',   { ascending: false })
+            .order('created_at', { ascending: false })
+            .range(from, to);
 
-        const { data, error: qErr } = await supabase
-          .from('transactions')
-          .select(`
-            txn_id, type, amount, name, phone,
-            account, business, paybill, till,
-            balance, transaction_cost,
-            txn_date, txn_time,
-            category, raw_text, confidence, needs_review
-          `)
-          .eq('user_id', user.id)
-          .order('txn_date',   { ascending: false })
-          .order('created_at', { ascending: false })
-          .range(from, to);
+          if (qErr) throw qErr;
 
-        if (qErr) throw qErr;
-
-        const rows = (data ?? []).map(rowToTransaction);
-        all  = [...all, ...rows];
-        done = rows.length < PAGE_SIZE;
-        page++;
+          const rows = (data ?? []).map(rowToTransaction);
+          remote  = [...remote, ...rows];
+          done = rows.length < PAGE_SIZE;
+          page++;
+        }
       }
-      return all;
+
+      // 2. Merge with items in Sync Queue (Local data)
+      const queue = JSON.parse(localStorage.getItem('pesapro_sync_queue') || '[]');
+      const local = queue.map((item: any) => ({
+        ...item.transaction,
+        is_local: true,
+      }));
+
+      // Combine and remove duplicates (prefer remote if same code)
+      const combined = [...local, ...remote];
+      const unique = Array.from(new Map(combined.map(t => [t.transaction_code, t])).values());
+
+      return unique;
     },
-    enabled: !!user,
-    staleTime: 1000 * 60 * 60 * 24,
-    gcTime: 1000 * 60 * 60 * 24 * 7,
+    // Keep data longer to support offline use
+    staleTime: 1000 * 60 * 5,
+    gcTime:    1000 * 60 * 60 * 24,
   });
 
   // Real-time subscription
   useEffect(() => {
     if (!user) return;
+
+    // Use a unique suffix to avoid "channel already subscribed" errors on re-renders
+    const channelId = `tx-sync-${user.id.slice(0, 8)}-${Math.random().toString(36).slice(2, 7)}`;
     const channel = supabase
-      .channel('transactions-realtime')
+      .channel(channelId)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'transactions', filter: `user_id=eq.${user.id}` },
-        () => {
-          if (navigator.onLine) refetch();
-        },
+        () => { if (navigator.onLine) refetch(); },
       )
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [user, refetch]);
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, refetch]);
 
   return {
     transactions,
     loading: isLoading,
-    error: error instanceof Error ? error.message : null,
+    error:   error instanceof Error ? error.message : null,
     refetch,
   };
 }
@@ -321,9 +321,15 @@ function useTransactions() {
 // --- Protected Route ----------------------------------------------------------
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, emailVerified } = useAuth();
-  if (loading)        return <GlobalLoader />;
-  if (!user)          return <Navigate to="/login"  replace />;
-  if (!emailVerified) return <Navigate to="/verify" replace />;
+
+  if (loading) return <GlobalLoader />;
+
+  // If user exists but email is not verified, force verification
+  if (user && !emailVerified) {
+    return <Navigate to="/verify" replace />;
+  }
+
+  // Otherwise allow access (Local-only mode if !user)
   return <>{children}</>;
 }
 
@@ -349,13 +355,7 @@ function DashboardRoute({ transactions }: { transactions: ParsedTransaction[] })
           await supabase.auth.signOut();
           navigate('/login', { replace: true });
         }}
-        onNavigate={(page) => {
-          if (page.startsWith('/')) {
-            navigate(page);
-          } else {
-            navigate(`/${page}`);
-          }
-        }}
+        onNavigate={(page) => navigate(page.startsWith('/') ? page : `/${page}`)}
         onUpgrade={(newPlan) => {
           if (newPlan === 'basic') return;
           setUpgradeModal({ open: true, plan: newPlan as Exclude<Plan, 'basic'> });
@@ -375,12 +375,31 @@ function DashboardRoute({ transactions }: { transactions: ParsedTransaction[] })
 }
 
 // --- Transactions wrapper -----------------------------------------------------
-function TransactionsRoute({ transactions }: { transactions: ParsedTransaction[] }) {
+function TransactionsRoute({ transactions: allTransactions }: { transactions: ParsedTransaction[] }) {
   const navigate = useNavigate();
+  const { currentBusinessId: bizId, currentBusiness } = useBusinesses();
+  const { refetch } = useTransactions();
+
+  const transactions = useMemo(() => {
+    if (!bizId) return allTransactions.filter(t => !t.business_id);
+    return allTransactions.filter(t => t.business_id === bizId);
+  }, [allTransactions, bizId]);
+
+  const handleClearAll = useCallback(async () => {
+    try {
+      await clearTransactions(bizId);
+      await refetch();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to clear transactions');
+    }
+  }, [bizId, refetch]);
+
   return (
     <TransactionsPage
       transactions={transactions}
+      businessName={currentBusiness?.name ?? 'Personal'}
       onBack={() => navigate(-1)}
+      onClearAll={handleClearAll}
     />
   );
 }
@@ -428,29 +447,26 @@ function AppRoutes() {
   const { transactions, error: txnError, refetch } = useTransactions();
   const { updateInfo, dismissed, dismiss, acknowledge } = useAppVersionCheck();
 
-  // Re-fetch when app resumes or comes online
   useEffect(() => {
     const handleSync = () => {
-      if (navigator.onLine) {
-        processSyncQueue().then(count => {
-          if (count && count > 0) {
-            console.log(`[Sync] Successfully synced ${count} items from offline queue`);
-            refetch();
-          }
-        });
-      }
+      if (!navigator.onLine) return;
+      processSyncQueue().then(count => {
+        if (count && count > 0) {
+          console.log(`[Sync] Synced ${count} items from offline queue`);
+          refetch();
+        }
+      });
     };
 
     handleSync();
     window.addEventListener('online', handleSync);
 
-    if (Capacitor.getPlatform() !== 'android') return;
+    if (Capacitor.getPlatform() !== 'android') {
+      return () => window.removeEventListener('online', handleSync);
+    }
+
     const onPause   = () => console.log('[Native] App paused');
-    const onResume  = () => {
-      console.log('[Native] App resumed');
-      handleSync();
-      refetch();
-    };
+    const onResume  = () => { console.log('[Native] App resumed'); handleSync(); refetch(); };
     const onBattery = (e: any) => {
       if (e.level < 0.2 && !e.isPlugged) console.warn('[Native] Low battery:', e.level);
     };
@@ -458,10 +474,10 @@ function AppRoutes() {
     document.addEventListener('resume',        onResume);
     window  .addEventListener('batterystatus', onBattery);
     return () => {
-      window.removeEventListener('online', handleSync);
-      document.removeEventListener('pause',         onPause);
-      document.removeEventListener('resume',        onResume);
-      window  .removeEventListener('batterystatus', onBattery);
+      window  .removeEventListener('online',       handleSync);
+      document.removeEventListener('pause',        onPause);
+      document.removeEventListener('resume',       onResume);
+      window  .removeEventListener('batterystatus',onBattery);
     };
   }, [refetch]);
 
@@ -469,16 +485,10 @@ function AppRoutes() {
 
   return (
     <AppShell>
-      {/* Update banner — hidden for 24h after "Later", permanently after "Download" */}
       {updateInfo && !dismissed && (
-        <UpdateBanner
-          info={updateInfo}
-          onDismiss={dismiss}
-          onAcknowledge={acknowledge}
-        />
+        <UpdateBanner info={updateInfo} onDismiss={dismiss} onAcknowledge={acknowledge} />
       )}
 
-      {/* Non-blocking error banner */}
       {txnError && transactions.length === 0 && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, zIndex: 8888,
@@ -521,6 +531,7 @@ function AppRoutes() {
           <Route path="/chama"            element={<ProtectedRoute><ChamaManager /></ProtectedRoute>} />
           <Route path="/settings"         element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
           <Route path="/admin"            element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />
+          <Route path="/mentor/:token"    element={<MentorPage />} />
 
           {/* -- Catch-all -- */}
           <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
@@ -533,10 +544,7 @@ function AppRoutes() {
 // --- Root ---------------------------------------------------------------------
 export default function App() {
   return (
-    <PersistQueryClientProvider
-      client={queryClient}
-      persistOptions={{ persister }}
-    >
+    <PersistQueryClientProvider client={queryClient} persistOptions={{ persister }}>
       <Router>
         <AuthProvider>
           <AnimatePresence mode="wait">

@@ -1,79 +1,93 @@
-# Pesa Pro - M-Pesa Transaction Manager
+# Pesa Pro 🚀
+### Automated M-PESA Bookkeeping & Chama Management
 
-A modern financial management tool built with React, Vite, TypeScript, Tailwind CSS, and shadcn/ui.
+**Pesa Pro** is an Android-first financial companion designed specifically for the Kenyan ecosystem. It replaces traditional paper notebooks and manual spreadsheets by transforming M-PESA SMS confirmations into actionable financial insights in real-time.
 
-## 🚀 Features
-
-- ⚡️ **M-Pesa SMS Parsing** - Automatically extract transaction details from your SMS messages
-- 📈 **Financial Analytics** - Visualize your revenue trends and cash distribution
-- 🤝 **Campaign Management** - Track fundraising progress and contributions
-- 🌗 **Dark Mode** - Beautiful interface with system-aware dark mode support
-- 🔒 **Privacy Mode** - Securely hide your balances in public spaces
-
-## 🛠️ Getting Started
-
-1. **Install dependencies**
-
-   ```bash
-   npm install
-   ```
-
-2. **Start development server**
-
-   ```bash
-   npm run dev
-   ```
-
-3. **Build for production**
-
-   ```bash
-   npm run build
-   ```
-
-## 📁 Project Structure
-
-```
-src/
-├── components/
-│   └── ui/              # shadcn/ui components
-├── features/
-│   ├── transactions/    # Transaction logic and services
-│   ├── campaigns/       # Campaign management logic
-│   └── members/         # Member management
-├── lib/
-│   └── supabase.ts      # Supabase client configuration
-├── App.tsx              # Main application component
-└── index.css            # Global styles with Tailwind
-```
-
-## 🎨 Technologies
-
-- **React 19** - Latest UI library
-- **Vite** - High-performance build tool
-- **Tailwind CSS** - Modern styling
-- **Supabase** - Backend and Authentication
-- **Recharts** - Interactive data visualization
-- **Lucide React** - Beautiful iconography
+[![Platform](https://img.shields.io/badge/Platform-Android-green.svg)](#)
+[![Stack](https://img.shields.io/badge/Stack-React%20%7C%20Capacitor%20%7C%20Supabase-blue.svg)](#)
+[![Privacy](https://img.shields.io/badge/Privacy-Offline--First-orange.svg)](#)
 
 ---
 
-**⚡ Powered by [FetroTech](https://fetrotech.com)** - Empowering financial clarity through smart technology.
+## ✨ Core Pillars
+
+### 1. Smart SMS Automation
+*   **Zero-Tap Import**: Native background listeners parse M-PESA SMS the moment they arrive.
+*   **Intelligent Parsing**: Extracts amount, transaction code, merchant/sender name, balance, and transaction fees.
+*   **Confidence Scoring**: Uses pattern matching and historical data to auto-verify transactions with up to 100% accuracy.
+
+### 2. Chama & Group Bookkeeping
+*   **Member Sync**: Match incoming payments to group members automatically by phone number.
+*   **Transaction Splitting**: One M-PESA payment can be split into multiple allocations (e.g., KES 500 = 400 Contribution + 100 Penalty).
+*   **Meeting Mode**: A live, shared ledger view for treasurers to project or share during physical meetings.
+
+### 3. Smart Budget Engine
+*   **Predictive Analytics**: "At this pace, you'll overspend by KES X" — real-time velocity calculations.
+*   **Threshold Alerts**: Native Android notifications fire at 80% and 100% budget usage.
+*   **Budget Rollover**: Optional unspent balance carry-over for healthcare or emergency savings.
+
+### 4. Privacy & Transparency
+*   **Local-Only Mode**: Use the app fully without an account. Data stays on your device.
+*   **Edge Parsing**: SMS parsing happens entirely on-device. Raw message text never hits the cloud.
+*   **One-Tap Wipe**: Permanent data deletion across local storage and remote cloud in a single click.
 
 ---
 
-## 🤖 What is FetroTech?
+## 🛠 Tech Stack
 
-**FetroTech** is a technology firm dedicated to building intelligent solutions for financial management and operational efficiency. We focus on bridging the gap between raw data and actionable insights.
-
-🔗 **Visit us:** [fetrotech.com](https://fetrotech.com)
-
-### Why Pesa Pro by FetroTech?
-
-- **Smart Automation** - Reduce manual entry with advanced SMS parsing
-- **Data Privacy** - Your financial data is encrypted and secure
-- **Real-time Insights** - Live tracking of campaigns and personal finances
-- **Community Driven** - Built to support Kenyan chamas and fundraisers
+*   **Frontend**: React 19 + Vite (Fast, modular UI)
+*   **Mobile Bridge**: Capacitor 8 (Native Android integration)
+*   **Database**: Supabase (PostgreSQL with Row Level Security)
+*   **State Management**: TanStack Query v5 (with offline persistence)
+*   **Icons & UI**: Lucide React + Framer Motion (Fluid Safaricom-inspired UX)
+*   **Notifications**: Capacitor Local Notifications
 
 ---
 
-Built with ❤️ by the **FetroTech** team to help you manage finances smarter.
+## 🚀 Getting Started
+
+### Prerequisites
+*   Node.js (v18+)
+*   Android Studio (for native builds)
+*   Supabase Account
+
+### Setup
+1.  **Clone & Install**:
+    ```bash
+    git clone https://github.com/yourusername/pesa-pro.git
+    cd pesa-pro
+    npm install
+    ```
+
+2.  **Database Migration**:
+    Run the SQL scripts in `supabase/migrations/` in your Supabase SQL Editor to set up the `transactions`, `groups`, `budgets`, and `debts` tables.
+
+3.  **Run Development**:
+    ```bash
+    npm run dev
+    ```
+
+4.  **Build for Android**:
+    ```bash
+    npm run build
+    npx cap sync android
+    cd android
+    ./gradlew installDebug
+    ```
+
+---
+
+## 🗺 Roadmap
+
+- [ ] **M-PESA Statement PDF Parser**: Batch import months of history in seconds.
+- [ ] **AI Spending Coach**: Personalized weekly insights powered by Claude API.
+- [ ] **Merchant Intelligence**: Crowdsourced database to turn "TILL 654321" into "Naivas Supermarket."
+- [ ] **Offline OCR Receipt Scanner**: Capture cash transactions via camera.
+
+---
+
+## 📄 License
+This project is proprietary. For inquiries or collaboration, contact the development lead at `fetrogames1@gmail.com`.
+
+---
+*Built with ❤️ for the Kenyan Financial Ecosystem.*

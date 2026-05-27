@@ -1,8 +1,8 @@
-// src/components/CampaignImageGenerator.tsx
+﻿// src/components/CampaignImageGenerator.tsx
 import { useState } from 'react';
-import { Download, ImageIcon, RefreshCw } from 'lucide-react';
+import { Download, ImageIcon, Info, RefreshCw, X } from 'lucide-react';
 
-// ─── Types ───────────────────────────────────
+// â”€â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 interface Campaign {
   id: number;
   title: string;
@@ -23,15 +23,15 @@ interface Props {
   theme?: string;
 }
 
-// ─── Theme palettes keyed by category ────────
+// â”€â”€â”€ Theme palettes keyed by category â”€â”€â”€â”€â”€â”€â”€â”€
 const THEMES: Record<string, { accent: string; accent2: string; label: string }> = {
-  medical:     { accent: '#10b981', accent2: '#34d399', label: '🏥 Medical' },
-  education:   { accent: '#3b82f6', accent2: '#60a5fa', label: '📚 Education' },
-  emergency:   { accent: '#ef4444', accent2: '#f87171', label: '🚨 Emergency' },
-  community:   { accent: '#f59e0b', accent2: '#fbbf24', label: '🤝 Community' },
-  business:    { accent: '#8b5cf6', accent2: '#a78bfa', label: '💼 Business' },
-  family:      { accent: '#ec4899', accent2: '#f472b6', label: '👨‍👩‍👧 Family' },
-  default:     { accent: '#10b981', accent2: '#34d399', label: '💚 Campaign' },
+  medical:     { accent: '#10b981', accent2: '#34d399', label: 'ðŸ¥ Medical' },
+  education:   { accent: '#3b82f6', accent2: '#60a5fa', label: 'ðŸ“š Education' },
+  emergency:   { accent: '#ef4444', accent2: '#f87171', label: 'ðŸš¨ Emergency' },
+  community:   { accent: '#f59e0b', accent2: '#fbbf24', label: 'ðŸ¤ Community' },
+  business:    { accent: '#8b5cf6', accent2: '#a78bfa', label: 'ðŸ’¼ Business' },
+  family:      { accent: '#ec4899', accent2: '#f472b6', label: 'ðŸ‘¨â€ðŸ‘©â€ðŸ‘§ Family' },
+  default:     { accent: '#10b981', accent2: '#34d399', label: 'ðŸ’š Campaign' },
 };
 
 function getTheme(category: string) {
@@ -39,7 +39,7 @@ function getTheme(category: string) {
   return THEMES[key] ?? THEMES.default;
 }
 
-// ─── Wrap text helper ─────────────────────────
+// â”€â”€â”€ Wrap text helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function wrapText(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -58,10 +58,10 @@ function wrapText(
     if (ctx.measureText(test).width > maxWidth && line) {
       if (lines >= maxLines - 1) {
         // truncate last line with ellipsis
-        while (ctx.measureText(`${line}…`).width > maxWidth && line.length > 0) {
+        while (ctx.measureText(`${line}â€¦`).width > maxWidth && line.length > 0) {
           line = line.slice(0, -1).trimEnd();
         }
-        ctx.fillText(`${line}…`, x, y + lines * lineHeight);
+        ctx.fillText(`${line}â€¦`, x, y + lines * lineHeight);
         return lines + 1;
       }
       ctx.fillText(line, x, y + lines * lineHeight);
@@ -78,7 +78,7 @@ function wrapText(
   return lines;
 }
 
-// ─── Main generator ───────────────────────────
+// â”€â”€â”€ Main generator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function generatePoster(campaign: Campaign): Promise<string> {
   const W = 800;
   const H = 1000;
@@ -88,35 +88,35 @@ async function generatePoster(campaign: Campaign): Promise<string> {
   const ctx = canvas.getContext('2d')!;
   const { accent, accent2 } = getTheme(campaign.category);
 
-  // ── Background
+  // â”€â”€ Background
   const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
   bgGrad.addColorStop(0, '#080d1a');
   bgGrad.addColorStop(1, '#0a1628');
   ctx.fillStyle = bgGrad;
   ctx.fillRect(0, 0, W, H);
 
-  // ── Subtle radial glow top-left
+  // â”€â”€ Subtle radial glow top-left
   const glow = ctx.createRadialGradient(120, 120, 0, 120, 120, 420);
   glow.addColorStop(0, `${accent}18`);
   glow.addColorStop(1, 'transparent');
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, W, H);
 
-  // ── Subtle radial glow bottom-right
+  // â”€â”€ Subtle radial glow bottom-right
   const glow2 = ctx.createRadialGradient(W - 80, H - 100, 0, W - 80, H - 100, 380);
   glow2.addColorStop(0, `${accent2}12`);
   glow2.addColorStop(1, 'transparent');
   ctx.fillStyle = glow2;
   ctx.fillRect(0, 0, W, H);
 
-  // ── Top accent bar (gradient)
+  // â”€â”€ Top accent bar (gradient)
   const barGrad = ctx.createLinearGradient(0, 0, W, 0);
   barGrad.addColorStop(0, accent);
   barGrad.addColorStop(1, accent2);
   ctx.fillStyle = barGrad;
   ctx.fillRect(0, 0, W, 5);
 
-  // ── Decorative circles
+  // â”€â”€ Decorative circles
   ctx.save();
   ctx.globalAlpha = 0.04;
   ctx.beginPath();
@@ -129,7 +129,7 @@ async function generatePoster(campaign: Campaign): Promise<string> {
   ctx.fill();
   ctx.restore();
 
-  // ── Category badge
+  // â”€â”€ Category badge
   const categoryLabel = (campaign.category || 'Campaign').toUpperCase();
   const badgeX = 48;
   const badgeY = 42;
@@ -155,7 +155,7 @@ async function generatePoster(campaign: Campaign): Promise<string> {
   ctx.fillText(categoryLabel, badgeX + badgePadX, badgeY + badgePadY + 9);
   ctx.letterSpacing = '0';
 
-  // ── Title
+  // â”€â”€ Title
   const titleY = 118;
   ctx.fillStyle = '#f8fafc';
   ctx.textAlign = 'left';
@@ -163,7 +163,7 @@ async function generatePoster(campaign: Campaign): Promise<string> {
   const titleLines = wrapText(ctx, campaign.title, 48, titleY, W - 96, 50, 2);
   const titleBottom = titleY + titleLines * 50;
 
-  // ── Thin divider
+  // â”€â”€ Thin divider
   const divY = titleBottom + 20;
   const divGrad = ctx.createLinearGradient(48, 0, W - 48, 0);
   divGrad.addColorStop(0, accent);
@@ -176,13 +176,13 @@ async function generatePoster(campaign: Campaign): Promise<string> {
   ctx.lineTo(W - 48, divY);
   ctx.stroke();
 
-  // ── Description
+  // â”€â”€ Description
   const descY = divY + 26;
   ctx.font = '15px Arial, sans-serif';
   ctx.fillStyle = '#94a3b8';
   wrapText(ctx, campaign.description || '', 48, descY, W - 96, 24, 4);
 
-  // ── Progress section
+  // â”€â”€ Progress section
   const progressSectionY = descY + 130;
 
   // Progress background card
@@ -257,7 +257,7 @@ async function generatePoster(campaign: Campaign): Promise<string> {
   // Stats row
   const statsY = barY + 36;
   const stats = [
-    { label: 'Still Needed', value: remaining > 0 ? `KES ${remaining.toLocaleString()}` : 'Goal Reached! 🎉' },
+    { label: 'Still Needed', value: remaining > 0 ? `KES ${remaining.toLocaleString()}` : 'Goal Reached! ðŸŽ‰' },
     { label: 'Progress',     value: `${pct.toFixed(1)}%` },
   ];
   const colW = (W - 144) / stats.length;
@@ -272,7 +272,7 @@ async function generatePoster(campaign: Campaign): Promise<string> {
     ctx.fillText(s.value, cx, statsY + 18);
   });
 
-  // ── Beneficiary / M-Pesa card
+  // â”€â”€ Beneficiary / M-Pesa card
   const infoY = progressSectionY + 208;
 
   if (campaign.beneficiary_name || campaign.payment_details || campaign.beneficiary_contact) {
@@ -317,7 +317,7 @@ async function generatePoster(campaign: Campaign): Promise<string> {
     }
   }
 
-  // ── Deadline badge
+  // â”€â”€ Deadline badge
   if (campaign.end_date) {
     const deadlineY = infoY + 136;
     const deadlineStr = new Date(campaign.end_date).toLocaleDateString('en-KE', {
@@ -327,10 +327,10 @@ async function generatePoster(campaign: Campaign): Promise<string> {
     ctx.textAlign = 'left';
     ctx.fillStyle = '#475569';
     ctx.font = '12px Arial, sans-serif';
-    ctx.fillText(`📅  Campaign ends: ${deadlineStr}`, 48, deadlineY);
+    ctx.fillText(`ðŸ“…  Campaign ends: ${deadlineStr}`, 48, deadlineY);
   }
 
-  // ── Bottom CTA strip
+  // â”€â”€ Bottom CTA strip
   const ctaY = H - 78;
   const ctaGrad = ctx.createLinearGradient(0, ctaY, W, ctaY);
   ctaGrad.addColorStop(0, accent);
@@ -344,12 +344,12 @@ async function generatePoster(campaign: Campaign): Promise<string> {
   ctx.fillText('Every contribution counts. Share & help us reach our goal.', W / 2, ctaY + 30);
   ctx.font = '12px Arial, sans-serif';
   ctx.fillStyle = 'rgba(2,44,34,0.7)';
-  ctx.fillText('Generated by Pesa Pro  •  pesa.pro', W / 2, ctaY + 56);
+  ctx.fillText('Generated by Pesa Pro  â€¢  pesa.pro', W / 2, ctaY + 56);
 
   return canvas.toDataURL('image/png');
 }
 
-// ─── Component ────────────────────────────────
+// â”€â”€â”€ Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const C = {
   bg: '#080d1a',
   surface: '#0f1729',
@@ -427,7 +427,7 @@ export default function CampaignImageGenerator({ campaign, onImageGenerated }: P
                   borderRadius: '50%',
                   animation: 'spin 0.8s linear infinite',
                 }} />
-                Generating Poster…
+                Generating Posterâ€¦
               </>
             ) : (
               <><ImageIcon size={16} /> Generate Poster</>

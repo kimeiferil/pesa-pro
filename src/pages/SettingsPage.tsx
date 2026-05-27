@@ -1,14 +1,18 @@
 import { useState } from 'react';
+import { usePlanGate } from '../hooks/usePlanGate';
+import { useUserPlan  } from '../hooks/useUserPlan';
+import { PLAN_LIMITS  } from '../config/planLimits';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { dataService } from '../services/dataService';
 import {
   User, Bell, Lock, Trash2,
   ChevronLeft, Check, Loader,
-  Eye, EyeOff, AlertTriangle, ChevronRight,
+  Eye, EyeOff, AlertTriangle, ChevronRight, ShieldCheck, Database, Cloud, Smartphone,
 } from 'lucide-react';
 
-type Section = 'profile' | 'notifications' | 'password' | 'delete';
+type Section = 'profile' | 'notifications' | 'password' | 'privacy' | 'delete';
 
 interface NotifPrefs {
   transactions: boolean;
@@ -130,6 +134,7 @@ function SectionContent({
   currentPw, setCurrentPw, newPw, setNewPw, confirmPw, setConfirmPw,
   pwLoading, pwSaved, pwError, changePassword,
   deleteConfirm, setDeleteConfirm, deleteLoading, deleteError, deleteAccount,
+  check, limits,
 }: any) {
   return (
     <div style={{ padding: '16px 16px 48px', animation: 'fadeIn .2s ease' }}>
@@ -215,6 +220,89 @@ function SectionContent({
         </Card>
       )}
 
+      {activeSection === 'privacy' && (
+        <Card>
+          <div>
+            <p style={{ fontSize: 15, fontWeight: 800, color: '#f8fafc', margin: '0 0 4px' }}>Data & Privacy</p>
+            <p style={{ fontSize: 12, color: '#475569', margin: 0 }}>Transparent view of what data we store and where.</p>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <Smartphone size={16} color="#3b82f6" />
+                <p style={{ fontSize: 13, fontWeight: 700, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>On Your Device (Local)</p>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {dataService.getTransparencyReport().local.map(item => (
+                  <div key={item.key} style={{ background: 'rgba(255,255,255,0.02)', padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <p style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0', margin: '0 0 2px' }}>{item.key}</p>
+                    <p style={{ fontSize: 11, color: '#64748b', margin: 0 }}>{item.description}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <Cloud size={16} color="#10b981" />
+                <p style={{ fontSize: 13, fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>On Our Cloud (Remote)</p>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {dataService.getTransparencyReport().remote.map(item => (
+                  <div key={item.table} style={{ background: 'rgba(255,255,255,0.02)', padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <p style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0', margin: '0 0 2px' }}>{item.table}</p>
+                    <p style={{ fontSize: 11, color: '#64748b', margin: 0 }}>{item.description}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* ── Gated export actions ── */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <button
+                onClick={() => check('statementDownload', { reason: 'Statement download is available on the Pro plan.' })}
+                style={{
+                  padding: '11px 16px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: limits.statementDownload ? 'rgba(16,185,129,0.12)' : 'rgba(255,255,255,0.04)',
+                  color: limits.statementDownload ? '#10b981' : '#475569',
+                  fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8,
+                  fontFamily: 'inherit', width: '100%', textAlign: 'left',
+                }}
+              >
+                <Database size={15} />
+                Download Statement
+                {!limits.statementDownload && <span style={{ marginLeft: 'auto', fontSize: 10, color: '#f59e0b' }}>PRO</span>}
+              </button>
+              <button
+                onClick={() => check('exportExcel', { reason: 'Excel export is available on the Premium plan.' })}
+                style={{
+                  padding: '11px 16px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: limits.exportExcel ? 'rgba(16,185,129,0.12)' : 'rgba(255,255,255,0.04)',
+                  color: limits.exportExcel ? '#10b981' : '#475569',
+                  fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8,
+                  fontFamily: 'inherit', width: '100%', textAlign: 'left',
+                }}
+              >
+                <Cloud size={15} />
+                Export to Excel
+                {!limits.exportExcel && <span style={{ marginLeft: 'auto', fontSize: 10, color: '#a855f7' }}>PREMIUM</span>}
+              </button>
+            </div>
+
+            <div style={{ background: 'rgba(59,130,246,0.05)', padding: 14, borderRadius: 12, border: '1px solid rgba(59,130,246,0.15)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <ShieldCheck size={16} color="#3b82f6" />
+                <p style={{ fontSize: 13, fontWeight: 700, color: '#f8fafc', margin: 0 }}>Privacy First</p>
+              </div>
+              <p style={{ fontSize: 11, color: '#94a3b8', margin: 0, lineHeight: 1.6 }}>
+                {dataService.getTransparencyReport().processing[0].description}
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
       {activeSection === 'delete' && (
         <Card>
           <div style={{
@@ -293,6 +381,10 @@ export default function SettingsPage() {
   const [pwSaved,    setPwSaved   ] = useState(false);
   const [pwError,    setPwError   ] = useState('');
 
+  const { plan } = useUserPlan(user?.id);
+  const { gate, check, closeGate } = usePlanGate(plan);
+  const limits = PLAN_LIMITS[plan];
+
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError,   setDeleteError  ] = useState('');
@@ -329,15 +421,20 @@ export default function SettingsPage() {
   const deleteAccount = async () => {
     if (deleteConfirm !== 'DELETE') { setDeleteError('Please type DELETE exactly to confirm.'); return; }
     setDeleteLoading(true);
-    const { error } = await supabase.from('profiles').delete().eq('id', user!.id);
-    if (error) { setDeleteError(error.message); setDeleteLoading(false); return; }
-    await signOut(); navigate('/login', { replace: true });
+    try {
+      await dataService.wipeAllData();
+      // dataService redirect already
+    } catch (e: any) {
+      setDeleteError(e.message || 'Wipe failed');
+      setDeleteLoading(false);
+    }
   };
 
   const NAV: { id: Section; label: string; icon: React.ReactNode; sub: string; danger?: boolean }[] = [
     { id: 'profile',       label: 'Profile',        sub: 'Name, phone, email',           icon: <User   size={20} /> },
     { id: 'notifications', label: 'Notifications',  sub: 'Alerts and preferences',        icon: <Bell   size={20} /> },
     { id: 'password',      label: 'Change Password', sub: 'Update your password',         icon: <Lock   size={20} /> },
+    { id: 'privacy',       label: 'Data & Privacy',  sub: 'Stored data transparency',      icon: <Database size={20} /> },
     { id: 'delete',        label: 'Delete Account', sub: 'Permanently remove account',    icon: <Trash2 size={20} />, danger: true },
   ];
 
@@ -351,6 +448,7 @@ export default function SettingsPage() {
     currentPw, setCurrentPw, newPw, setNewPw, confirmPw, setConfirmPw,
     pwLoading, pwSaved, pwError, changePassword,
     deleteConfirm, setDeleteConfirm, deleteLoading, deleteError, deleteAccount,
+    check, limits,
   };
 
   const BASE = {
@@ -495,6 +593,49 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+
+      {/* Plan gate modal */}
+      {gate.open && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 999,
+            background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
+          }}
+          onClick={closeGate}
+        >
+          <div
+            style={{
+              background: '#0d1526', border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: 20, padding: 28, maxWidth: 380, width: '100%',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <p style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 900, color: '#f1f5f9' }}>
+              {gate.requiredPlan === 'premium' ? '✨ Premium Feature' : '⚡ Pro Feature'}
+            </p>
+            <p style={{ margin: '0 0 20px', fontSize: 13, color: '#64748b', lineHeight: 1.6 }}>
+              {gate.reason}
+            </p>
+            {gate.limitCount != null && (
+              <p style={{ margin: '0 0 16px', fontSize: 12, color: '#f59e0b' }}>
+                {gate.currentCount} / {gate.limitCount} used
+              </p>
+            )}
+            <button
+              onClick={closeGate}
+              style={{
+                width: '100%', padding: '12px', borderRadius: 11, border: 'none',
+                background: gate.requiredPlan === 'premium' ? '#a855f7' : '#10b981',
+                color: gate.requiredPlan === 'premium' ? '#fff' : '#022c22',
+                fontWeight: 800, fontSize: 14, cursor: 'pointer',
+              }}
+            >
+              Upgrade to {gate.requiredPlan === 'premium' ? 'Premium' : 'Pro'}
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 }

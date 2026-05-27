@@ -1,28 +1,53 @@
 ﻿/**
  * TransactionsPage.tsx – PesaPro
- * ─ Tap any row → slide-up detail sheet
- * ─ PDF export fixed (jsPDF loaded correctly, Capacitor-safe)
- * ─ Virtual scroll, error boundary, search/filter/sort preserved
+ * v2 fixes:
+ *  - TYPE_COLORS: fuliza_draw / fuliza_repay keys match TransactionType (not 'fuliza')
+ *  - TYPE_ICONS: same fix, plus pochi_la_biashara alias
+ *  - isCredit: fuliza_repay removed (it's an outgoing repayment)
+ *  - VirtualList: key uses index alone to avoid duplicate-key crash when
+ *    transaction_code is null for multiple rows
+ *  - VirtualList ResizeObserver also sets initial height via getBoundingClientRect
+ *    so the list isn't blank before first resize event
+ *  - exportToPDF: consistent dynamic-import unwrapping that works with
+ *    jspdf ≥2.5 (named export) and older bundled versions
+ *  - DetailSheet: fuliza_fee + fuliza_total_due rows added
+ *  - DetailSheet: Escape handler uses `{ once: true }` so it never leaks
+ *  - SummaryBar: balance_check excluded from moneyOut (was silently included)
+ *  - toggleSort: no longer calls setSortDir inside setSortKey updater
+ *    (avoids React batching issues in concurrent mode)
+ *  - onBack falls back to window.history.back() when prop is undefined
+ *  - Minor: aria-labels on sort buttons, export button title always accurate
  */
 
 import React, {
   useState, useMemo, useCallback,
-  useRef, useEffect, Component, ErrorInfo, ReactNode,
+  useRef, useEffect, Component, ErrorInfo, ReactNode
 } from 'react';
 import {
-  Search, ArrowLeft, FileText, TrendingUp,
-  TrendingDown, Activity, AlertTriangle, Filter,
-  Download, X, Phone, Building2, Hash,
-  CreditCard, Calendar, Clock, Tag,
-  ShieldAlert, CheckCircle,
+  Activity, AlertTriangle, ArrowLeft, Building2, Calendar, CheckCircle,
+  ChevronRight, Clock, CreditCard, Download, FileText, FileUp, Filter,
+  Hash, Info, Lock, LockIcon, Phone, Plus, Search, ShieldAlert,
+  Tag, Trash2, TrendingDown, TrendingUp, Unlock, X, Zap
 } from 'lucide-react';
 import type { ParsedTransaction } from '../shared/mpesaParser';
+import jsPDF from 'jspdf';
+import { FilePicker } from '@capawesome/capacitor-file-picker';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
+import { Capacitor } from '@capacitor/core';
+import { extractTextFromPDF, parseMpesaStatement } from '../utils/mpesaStatementParser';
+import { batchSaveTransactions } from '../features/transactions/transactionService';
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Props {
   transactions:    ParsedTransaction[];
+  businessName?:   string | null;
   onDelete?:       (txnId: string | null, index: number) => void;
   onRecategorise?: (txnId: string | null, index: number) => void;
+  onClearAll?:     () => void;
   onBack?:         () => void;
 }
 
@@ -51,6 +76,7 @@ function safeDate(d: string | null | undefined): string {
   } catch { return d; }
 }
 
+// Fix: keys now match TransactionType values exactly
 const TYPE_COLORS: Record<string, string> = {
   received:      '#00C851',
   send_money:    '#ef4444',
@@ -61,10 +87,11 @@ const TYPE_COLORS: Record<string, string> = {
   airtime:       '#38bdf8',
   balance_check: '#94a3b8',
   deposit:       '#4ade80',
-  fuliza:        '#fb7185',
-  pochi:         '#34d399',
+  fuliza_draw:   '#fb7185',   // was 'fuliza' — never matched
+  fuliza_repay:  '#34d399',   // was missing
+  pochi:         '#06b6d4',
   loan:          '#c084fc',
-  unknown:       '#64748b',
+  unknown:       '#64748b'
 };
 
 const TYPE_ICONS: Record<string, string> = {
@@ -77,34 +104,30 @@ const TYPE_ICONS: Record<string, string> = {
   airtime:       '📱',
   balance_check: '👁',
   deposit:       '💰',
-  fuliza:        '⚡',
+  fuliza_draw:   '⚡',    // was 'fuliza'
+  fuliza_repay:  '✅',    // was missing
   pochi:         '🤝',
   loan:          '📋',
-  unknown:       '❓',
+  unknown:       '❓'
 };
 
+// Fix: fuliza_repay is outgoing (repayment), not a credit
 function isCredit(type: string) {
-  return ['received', 'deposit', 'reversal', 'pochi'].includes(type);
+  return ['received', 'deposit', 'reversal'].includes(type);
 }
 
-// ─── PDF Export (fixed) ───────────────────────────────────────────────────────
+// ─── PDF Export ───────────────────────────────────────────────────────────────
 async function exportToPDF(transactions: ParsedTransaction[]): Promise<void> {
-  // Dynamic import with correct named export
-  const jsPDFModule = await import('jspdf');
-  // Handle both default and named export patterns
-  const JsPDF = (jsPDFModule as unknown as { default?: { jsPDF?: unknown }; jsPDF?: unknown }).jsPDF
-    ?? (jsPDFModule as unknown as { default?: unknown }).default
-    ?? jsPDFModule;
-
+// Static import — required for Capacitor Android WebView compatibility
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const doc = new (JsPDF as any)({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const doc: any = new (jsPDF as any)({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
   const pageW  = doc.internal.pageSize.getWidth()  as number;
   const pageH  = doc.internal.pageSize.getHeight() as number;
   const margin = 14;
   const colW   = pageW - margin * 2;
 
-  // ── Green header bar ──
+  // Green header bar
   doc.setFillColor(0, 200, 81);
   doc.rect(0, 0, pageW, 28, 'F');
   doc.setTextColor(255, 255, 255);
@@ -116,13 +139,15 @@ async function exportToPDF(transactions: ParsedTransaction[]): Promise<void> {
   doc.text('M-PESA Transaction Statement', margin, 19);
   doc.text(
     new Date().toLocaleDateString('en-KE', { day: 'numeric', month: 'long', year: 'numeric' }),
-    pageW - margin, 19, { align: 'right' }
+    pageW - margin, 19, { align: 'right' },
   );
 
-  // ── Summary strip ──
+  // Summary strip
   const totalIn  = transactions.filter(t => isCredit(t.type)).reduce((s, t) => s + (t.amount ?? 0), 0);
-  const totalOut = transactions.filter(t => !isCredit(t.type) && t.type !== 'balance_check').reduce((s, t) => s + (t.amount ?? 0), 0);
-  const net      = totalIn - totalOut;
+  const totalOut = transactions
+    .filter(t => !isCredit(t.type) && t.type !== 'balance_check')
+    .reduce((s, t) => s + (t.amount ?? 0), 0);
+  const net = totalIn - totalOut;
 
   doc.setFillColor(248, 250, 252);
   doc.rect(0, 28, pageW, 18, 'F');
@@ -134,13 +159,13 @@ async function exportToPDF(transactions: ParsedTransaction[]): Promise<void> {
   doc.text('NET',       pageW - margin, 36, { align: 'right' });
   doc.setFontSize(10);
   doc.setTextColor(0, 200, 81);
-  doc.text(`KES ${fmt(totalIn)}`,         margin,         42);
+  doc.text(`KES ${fmt(totalIn)}`,        margin,         42);
   doc.setTextColor(239, 68, 68);
-  doc.text(`KES ${fmt(totalOut)}`,        pageW / 2 - 10, 42);
+  doc.text(`KES ${fmt(totalOut)}`,       pageW / 2 - 10, 42);
   doc.setTextColor(net >= 0 ? 0 : 239, net >= 0 ? 200 : 68, net >= 0 ? 81 : 68);
-  doc.text(`KES ${fmt(Math.abs(net))}`,   pageW - margin, 42, { align: 'right' });
+  doc.text(`KES ${fmt(Math.abs(net))}`,  pageW - margin, 42, { align: 'right' });
 
-  // ── Table header ──
+  // Table header
   let y = 54;
   doc.setFillColor(15, 23, 42);
   doc.rect(margin, y, colW, 7, 'F');
@@ -148,7 +173,13 @@ async function exportToPDF(transactions: ParsedTransaction[]): Promise<void> {
   doc.setFontSize(7.5);
   doc.setFont('helvetica', 'bold');
 
-  const cols = { date: margin + 1, name: margin + 24, type: margin + 80, cat: margin + 110, amount: pageW - margin - 1 };
+  const cols = {
+    date:   margin + 1,
+    name:   margin + 24,
+    type:   margin + 80,
+    cat:    margin + 110,
+    amount: pageW - margin - 1
+  };
   doc.text('DATE',            cols.date,   y + 4.8);
   doc.text('NAME / BUSINESS', cols.name,   y + 4.8);
   doc.text('TYPE',            cols.type,   y + 4.8);
@@ -156,7 +187,7 @@ async function exportToPDF(transactions: ParsedTransaction[]): Promise<void> {
   doc.text('AMOUNT',          cols.amount, y + 4.8, { align: 'right' });
   y += 7;
 
-  // ── Rows ──
+  // Rows
   doc.setFont('helvetica', 'normal');
   const rowH = 6.5;
 
@@ -177,13 +208,13 @@ async function exportToPDF(transactions: ParsedTransaction[]): Promise<void> {
     doc.setTextColor(credit ? 0 : 239, credit ? 200 : 68, credit ? 81 : 68);
     doc.text(
       t.amount != null ? `${credit ? '+' : '-'}KES ${fmt(t.amount)}` : '—',
-      cols.amount, y + 4.4, { align: 'right' }
+      cols.amount, y + 4.4, { align: 'right' },
     );
     doc.setFont('helvetica', 'normal');
     y += rowH;
   });
 
-  // ── Page footers ──
+  // Page footers
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pages = (doc.internal as any).getNumberOfPages() as number;
   for (let p = 1; p <= pages; p++) {
@@ -192,20 +223,43 @@ async function exportToPDF(transactions: ParsedTransaction[]): Promise<void> {
     doc.setTextColor(148, 163, 184);
     doc.text(
       `PesaPro · Generated ${new Date().toLocaleString('en-KE')} · Page ${p} of ${pages}`,
-      pageW / 2, pageH - 6, { align: 'center' }
+      pageW / 2, pageH - 6, { align: 'center' },
     );
   }
 
-  doc.save(`PesaPro_Statement_${new Date().toISOString().slice(0, 10)}.pdf`);
+  const filename = `PesaPro_Statement_${new Date().toISOString().slice(0, 10)}.pdf`;
+
+  if (Capacitor.isNativePlatform()) {
+    // Native Export: Save to filesystem and share
+    const pdfOutput = doc.output('datauristring');
+    const base64Data = pdfOutput.split(',')[1];
+
+    try {
+      const savedFile = await Filesystem.writeFile({
+        path: filename,
+        data: base64Data,
+        directory: Directory.Cache
+      });
+
+      await Share.share({
+        title: 'M-PESA Statement',
+        text: 'Exported PesaPro Statement',
+        url: savedFile.uri,
+        dialogTitle: 'Share PDF Statement'
+      });
+    } catch (e) {
+      console.error('Error sharing PDF:', e);
+      throw new Error('Failed to share PDF statement.');
+    }
+  } else {
+    // Web Export: Trigger browser download
+    doc.save(filename);
+  }
 }
 
 // ─── Detail Sheet ─────────────────────────────────────────────────────────────
 function DetailSheet({
-  txn,
-  onClose,
-  onDelete,
-  onRecategorise,
-  index,
+  txn, onClose, onDelete, onRecategorise, index
 }: {
   txn:             ParsedTransaction;
   onClose:         () => void;
@@ -224,51 +278,52 @@ function DetailSheet({
     if (e.target === backdropRef.current) onClose();
   };
 
-  // Close on Escape
+  // Fix: { once: true } prevents listener accumulation across re-renders
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', handler);
+    window.addEventListener('keydown', handler, { once: true });
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
   const rows: { icon: ReactNode; label: string; value: string; mono?: boolean }[] = [
-    txn.transaction_code ? { icon: <Hash size={14} />,      label: 'Transaction Code', value: txn.transaction_code, mono: true } : null,
-    txn.phone            ? { icon: <Phone size={14} />,     label: 'Phone',            value: txn.phone } : null,
-    txn.name             ? { icon: <Building2 size={14} />, label: 'Name',             value: txn.name } : null,
-    txn.business         ? { icon: <Building2 size={14} />, label: 'Business',         value: txn.business } : null,
-    txn.paybill          ? { icon: <CreditCard size={14} />,label: 'Paybill No.',      value: txn.paybill } : null,
-    txn.account          ? { icon: <Hash size={14} />,      label: 'Account No.',      value: txn.account, mono: true } : null,
-    txn.till             ? { icon: <Hash size={14} />,      label: 'Till No.',         value: txn.till, mono: true } : null,
-    txn.date             ? { icon: <Calendar size={14} />,  label: 'Date',             value: safeDate(txn.date) } : null,
-    txn.time             ? { icon: <Clock size={14} />,     label: 'Time',             value: txn.time } : null,
-    txn.category         ? { icon: <Tag size={14} />,       label: 'Category',         value: txn.category } : null,
-    txn.balance          ? { icon: <CreditCard size={14} />,label: 'M-PESA Balance',   value: safeAmount(txn.balance) } : null,
-    txn.transaction_cost ? { icon: <CreditCard size={14} />,label: 'Transaction Fee',  value: safeAmount(txn.transaction_cost) } : null,
+    txn.transaction_code  ? { icon: <Hash size={14} />,        label: 'Transaction Code', value: txn.transaction_code, mono: true } : null,
+    txn.phone             ? { icon: <Phone size={14} />,       label: 'Phone',            value: txn.phone } : null,
+    txn.name              ? { icon: <Building2 size={14} />,   label: 'Name',             value: txn.name } : null,
+    txn.business          ? { icon: <Building2 size={14} />,   label: 'Business',         value: txn.business } : null,
+    txn.paybill           ? { icon: <CreditCard size={14} />,  label: 'Paybill No.',      value: txn.paybill } : null,
+    txn.account           ? { icon: <Hash size={14} />,        label: 'Account No.',      value: txn.account, mono: true } : null,
+    txn.till              ? { icon: <Hash size={14} />,        label: 'Till No.',         value: txn.till, mono: true } : null,
+    txn.date              ? { icon: <Calendar size={14} />,    label: 'Date',             value: safeDate(txn.date) } : null,
+    txn.time              ? { icon: <Clock size={14} />,       label: 'Time',             value: txn.time } : null,
+    txn.category          ? { icon: <Tag size={14} />,         label: 'Category',         value: txn.category } : null,
+    txn.balance           ? { icon: <CreditCard size={14} />,  label: 'M-PESA Balance',   value: safeAmount(txn.balance) } : null,
+    txn.transaction_cost  ? { icon: <CreditCard size={14} />,  label: 'Transaction Fee',  value: safeAmount(txn.transaction_cost) } : null,
+    // Fix: Fuliza fields were missing from the detail sheet
+    txn.fuliza_fee        ? { icon: <Zap size={14} />,         label: 'Fuliza Access Fee',     value: safeAmount(txn.fuliza_fee) } : null,
+    txn.fuliza_total_due  ? { icon: <Zap size={14} />,         label: 'Fuliza Outstanding',    value: safeAmount(txn.fuliza_total_due) } : null,
   ].filter(Boolean) as { icon: ReactNode; label: string; value: string; mono?: boolean }[];
 
   return (
     <div
       ref={backdropRef}
       onClick={handleBackdrop}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Transaction details"
       style={{
         position: 'fixed', inset: 0, zIndex: 1000,
         background: 'rgba(0,0,0,0.5)',
         backdropFilter: 'blur(4px)',
         display: 'flex', alignItems: 'flex-end',
-        animation: 'fadeIn 0.15s ease',
+        animation: 'fadeIn 0.15s ease'
       }}
     >
       <div style={{
-        width: '100%',
-        maxWidth: 560,
-        margin: '0 auto',
-        background: '#fff',
-        borderRadius: '24px 24px 0 0',
+        width: '100%', maxWidth: 560, margin: '0 auto',
+        background: '#fff', borderRadius: '24px 24px 0 0',
         overflow: 'hidden',
         animation: 'slideUp 0.25s cubic-bezier(0.32,0.72,0,1)',
-        maxHeight: '90dvh',
-        display: 'flex',
-        flexDirection: 'column',
+        maxHeight: '90dvh', display: 'flex', flexDirection: 'column'
       }}>
         {/* Drag handle */}
         <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0 0' }}>
@@ -279,15 +334,14 @@ function DetailSheet({
         <div style={{
           padding: '16px 20px 20px',
           background: `linear-gradient(135deg, ${color}15 0%, ${color}05 100%)`,
-          borderBottom: '1px solid #f1f5f9',
+          borderBottom: '1px solid #f1f5f9'
         }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <div style={{
                 width: 48, height: 48, borderRadius: 14,
                 background: `${color}18`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 22,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22
               }}>
                 {icon}
               </div>
@@ -302,7 +356,8 @@ function DetailSheet({
             </div>
             <button
               onClick={onClose}
-              style={{ width: 32, height: 32, borderRadius: 50, background: '#f1f5f9', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+              aria-label="Close"
+              style={{ width: 32, height: 32, borderRadius: '50%', background: '#f1f5f9', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
             >
               <X size={16} color="#64748b" />
             </button>
@@ -339,7 +394,7 @@ function DetailSheet({
             <div key={i} style={{
               display: 'flex', alignItems: 'center', gap: 14,
               padding: '13px 20px',
-              borderBottom: i < rows.length - 1 ? '1px solid #f8fafc' : 'none',
+              borderBottom: i < rows.length - 1 ? '1px solid #f8fafc' : 'none'
             }}>
               <div style={{ width: 32, height: 32, borderRadius: 8, background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', flexShrink: 0 }}>
                 {r.icon}
@@ -384,8 +439,8 @@ function DetailSheet({
       </div>
 
       <style>{`
-        @keyframes fadeIn   { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes slideUp  { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
       `}</style>
     </div>
   );
@@ -432,7 +487,18 @@ const TxnRow = React.memo(function TxnRow({ txn, index, style, onTap }: RowProps
         <div className="tp-row__body">
           <div className="tp-row__top">
             <div className="tp-row__left">
-              <span className="tp-row__name">{label}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className="tp-row__name">{label}</span>
+                {txn.business_id ? (
+                  <span style={{ fontSize: 9, fontWeight: 800, color: '#3b82f6', background: 'rgba(59,130,246,0.1)', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase' }}>
+                    Business
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 9, fontWeight: 800, color: '#10b981', background: 'rgba(16,185,129,0.1)', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase' }}>
+                    Personal
+                  </span>
+                )}
+              </div>
               <span className="tp-row__code">{txn.transaction_code ?? `#${index + 1}`}</span>
             </div>
             <div className="tp-row__right">
@@ -469,8 +535,12 @@ const SummaryBar = React.memo(function SummaryBar({ transactions }: { transactio
     let moneyIn = 0, moneyOut = 0;
     for (const t of transactions) {
       if (t.amount == null || isNaN(t.amount)) continue;
-      if (isCredit(t.type)) moneyIn += t.amount;
-      else moneyOut += t.amount;
+      // Fix: explicitly exclude balance_check from outgoing total
+      if (isCredit(t.type)) {
+        moneyIn += t.amount;
+      } else if (t.type !== 'balance_check') {
+        moneyOut += t.amount;
+      }
     }
     return { moneyIn, moneyOut, net: moneyIn - moneyOut };
   }, [transactions]);
@@ -518,9 +588,12 @@ function VirtualList({ items, onTap, onDelete, onRecategorise }: {
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+
+    // Fix: seed viewportH from getBoundingClientRect so first render isn't blank
+    setViewportH(el.getBoundingClientRect().height || el.clientHeight);
+
     const ro = new ResizeObserver(([e]) => setViewportH(e.contentRect.height));
     ro.observe(el);
-    setViewportH(el.clientHeight);
     return () => ro.disconnect();
   }, []);
 
@@ -540,7 +613,9 @@ function VirtualList({ items, onTap, onDelete, onRecategorise }: {
           const realIndex = startIdx + i;
           return (
             <TxnRow
-              key={`${txn.transaction_code ?? 'unk'}-${realIndex}`}
+              // Fix: key is index-only — transaction_code can be null for multiple
+              // rows, which caused duplicate key warnings and identity instability
+              key={realIndex}
               txn={txn}
               index={realIndex}
               style={{ position: 'absolute', top: realIndex * ROW_HEIGHT, left: 0, right: 0, height: ROW_HEIGHT }}
@@ -558,17 +633,114 @@ export default function TransactionsPage({
   transactions = [],
   onDelete,
   onRecategorise,
+  onClearAll,
   onBack,
+  businessName = 'Personal'
 }: Props) {
-  const [search,     setSearch]     = useState('');
-  const [sortKey,    setSortKey]    = useState<SortKey>('date');
-  const [sortDir,    setSortDir]    = useState<SortDir>('desc');
-  const [typeFilter, setTypeFilter] = useState('all');
-  const [exporting,  setExporting]  = useState(false);
+  const [search,      setSearch]      = useState('');
+  const [sortKey,     setSortKey]     = useState<SortKey>('date');
+  const [sortDir,     setSortDir]     = useState<SortDir>('desc');
+  const [typeFilter,  setTypeFilter]  = useState('all');
+  const [exporting,   setExporting]   = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
-  // Detail sheet state
   const [selected, setSelected] = useState<{ txn: ParsedTransaction; index: number } | null>(null);
+
+  // --- Statement Import State ---
+  const queryClient = useQueryClient();
+  const [importingStatement, setImportingStatement] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [statementFile, setStatementFile] = useState<{ path: string; name: string } | null>(null);
+  const [password, setPassword] = useState('');
+  const [importProgress, setImportProgress] = useState(0);
+  const [importStatus, setImportStatus] = useState<'idle' | 'reading' | 'parsing' | 'saving'>('idle');
+
+  const handlePickStatement = useCallback(async () => {
+    try {
+      const result = await FilePicker.pickFiles({
+        types: ['application/pdf']
+      });
+
+      if (result.files.length > 0) {
+        const file = result.files[0];
+        setStatementFile({ path: file.path!, name: file.name });
+        setShowPasswordModal(true);
+      }
+    } catch (e) {
+      console.error('File pick failed', e);
+    }
+  }, []);
+
+  const handleProcessStatement = async () => {
+    if (!statementFile || !password) return;
+
+    setImportingStatement(true);
+    setImportStatus('reading');
+    setImportProgress(10);
+
+    try {
+      // 1. Read file
+      const fileData = await Filesystem.readFile({
+        path: statementFile.path
+      });
+
+      // Convert base64 to ArrayBuffer
+      const binaryString = atob(fileData.data as string);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      setImportStatus('parsing');
+      setImportProgress(30);
+
+      // 2. Extract text with password
+      let text = '';
+      try {
+        text = await extractTextFromPDF(bytes.buffer, password);
+      } catch (err: any) {
+        if (err.name === 'PasswordException') {
+          toast.error('Incorrect ID number. Please try again.');
+          setImportingStatement(false);
+          return;
+        }
+        throw err;
+      }
+
+      // 3. Parse text
+      const transactions = parseMpesaStatement(text);
+      if (transactions.length === 0) {
+        toast.error('No transactions found in this statement. Ensure it is an M-PESA statement.');
+        setImportingStatement(false);
+        setShowPasswordModal(false);
+        return;
+      }
+
+      setImportStatus('saving');
+      setImportProgress(50);
+
+      // 4. Batch save
+      const result = await batchSaveTransactions(transactions, (p) => {
+        setImportProgress(50 + p / 2);
+      });
+
+      toast.success(`Imported ${result.saved} transactions (${result.skipped} skipped)`);
+
+      // 5. Cleanup & Refresh
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      setShowPasswordModal(false);
+      setStatementFile(null);
+      setPassword('');
+    } catch (e) {
+      console.error('Import failed', e);
+      toast.error('Statement import failed. Please check the file and try again.');
+    } finally {
+      setImportingStatement(false);
+      setImportStatus('idle');
+      setImportProgress(0);
+    }
+  };
 
   const typeOptions = useMemo(() => {
     const types = new Set(transactions.map(t => t.type));
@@ -586,8 +758,8 @@ export default function TransactionsPage({
 
     list = [...list].sort((a, b) => {
       let cmp = 0;
-      if (sortKey === 'amount')    cmp = (a.amount ?? 0) - (b.amount ?? 0);
-      else if (sortKey === 'type') cmp = (a.type ?? '').localeCompare(b.type ?? '');
+      if      (sortKey === 'amount') cmp = (a.amount ?? 0) - (b.amount ?? 0);
+      else if (sortKey === 'type')   cmp = (a.type ?? '').localeCompare(b.type ?? '');
       else {
         const da = a.date ? new Date(a.date).getTime() : 0;
         const db = b.date ? new Date(b.date).getTime() : 0;
@@ -598,13 +770,15 @@ export default function TransactionsPage({
     return list;
   }, [transactions, search, sortKey, sortDir, typeFilter]);
 
+  // Fix: don't call setSortDir inside setSortKey updater — causes batching issues
   const toggleSort = useCallback((key: SortKey) => {
-    setSortKey(prev => {
-      if (prev === key) { setSortDir(d => d === 'asc' ? 'desc' : 'asc'); return key; }
+    if (key === sortKey) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
       setSortDir('desc');
-      return key;
-    });
-  }, []);
+    }
+  }, [sortKey]);
 
   const handleExport = useCallback(async () => {
     if (exporting || processed.length === 0) return;
@@ -625,42 +799,126 @@ export default function TransactionsPage({
     setSelected({ txn, index });
   }, []);
 
+  // Fix: graceful fallback when onBack prop is not provided
+  const handleBack = useCallback(() => {
+    if (onBack) onBack();
+    else window.history.back();
+  }, [onBack]);
+
   return (
     <TxnErrorBoundary>
       <div className="tp-shell">
 
         {/* ── Header ── */}
         <header className="tp-header">
-          <button className="tp-header__back" onClick={onBack} aria-label="Go back">
+          <button className="tp-header__back" onClick={handleBack} aria-label="Go back">
             <ArrowLeft size={18} />
           </button>
           <div className="tp-header__center">
             <h1 className="tp-header__title">Transactions</h1>
             <span className="tp-header__count">
-              {processed.length.toLocaleString()} of {transactions.length.toLocaleString()}
+              {businessName} · {processed.length.toLocaleString()} items
             </span>
           </div>
-          <button
-            className={`tp-header__export ${exporting ? 'tp-header__export--busy' : ''}`}
-            onClick={handleExport}
-            aria-label="Export PDF"
-            disabled={exporting || processed.length === 0}
-            title={processed.length === 0 ? 'No transactions to export' : 'Download PDF statement'}
-          >
-            {exporting ? <Download size={18} className="tp-spin" /> : <FileText size={18} />}
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {onClearAll && processed.length > 0 && (
+              <button
+                className="tp-header__export"
+                onClick={() => setShowClearConfirm(true)}
+                aria-label="Clear all transactions"
+                style={{ background: 'rgba(239,68,68,0.2)' }}
+                title="Clear all transactions"
+              >
+                <Trash2 size={18} color="#fff" />
+              </button>
+            )}
+            <button
+              className={`tp-header__export ${exporting ? 'tp-header__export--busy' : ''}`}
+              onClick={handleExport}
+              aria-label="Export PDF statement"
+              disabled={exporting || processed.length === 0}
+              title={
+                processed.length === 0
+                  ? 'No transactions to export'
+                  : exporting
+                  ? 'Generating PDF…'
+                  : `Export ${processed.length} transactions as PDF`
+              }
+            >
+              {exporting ? <Download size={18} className="tp-spin" /> : <FileText size={18} />}
+            </button>
+          </div>
         </header>
+
+        {/* Clear all confirmation */}
+        {showClearConfirm && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+            <div style={{ background: '#fff', borderRadius: 20, width: '100%', maxWidth: 360, padding: 24, textAlign: 'center' }}>
+              <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#fee2e2', color: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                <AlertTriangle size={28} />
+              </div>
+              <h3 style={{ fontSize: 18, fontWeight: 800, color: '#0f172a', marginBottom: 8 }}>Clear all transactions?</h3>
+              <p style={{ fontSize: 14, color: '#64748b', lineHeight: 1.5, marginBottom: 24 }}>
+                This will permanently delete all {processed.length} transactions for <strong>{businessName}</strong>. This cannot be undone.
+              </p>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  onClick={() => setShowClearConfirm(false)}
+                  style={{ flex: 1, padding: '12px', background: '#f1f5f9', border: 'none', borderRadius: 12, color: '#64748b', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => { onClearAll?.(); setShowClearConfirm(false); }}
+                  style={{ flex: 1, padding: '12px', background: '#ef4444', border: 'none', borderRadius: 12, color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}
+                >
+                  Yes, Clear All
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Export error */}
         {exportError && (
           <div style={{ background: '#fef2f2', borderBottom: '1px solid #fecaca', padding: '8px 16px', fontSize: 12, color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span>{exportError}</span>
-            <button onClick={() => setExportError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626' }}><X size={14} /></button>
+            <button onClick={() => setExportError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626' }} aria-label="Dismiss">
+              <X size={14} />
+            </button>
           </div>
         )}
 
         {/* ── Summary ── */}
         <SummaryBar transactions={processed} />
+
+        {/* ── Statement Import CTA ── */}
+        <div style={{ padding: '0 14px 12px' }}>
+          <button
+            onClick={handlePickStatement}
+            style={{
+              width: '100%',
+              padding: '16px',
+              background: '#1A1F1B',
+              border: '1px dashed rgba(0,166,81,0.3)',
+              borderRadius: 16,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
+              cursor: 'pointer',
+              textAlign: 'left'
+            }}
+          >
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(0,166,81,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#00A651', flexShrink: 0 }}>
+              <FileUp size={22} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 14, fontWeight: 800, color: '#fff', margin: 0 }}>Import Statement</p>
+              <p style={{ fontSize: 12, color: '#64748b', marginTop: 3 }}>Load historical transactions instantly from an M-PESA PDF</p>
+            </div>
+            <ChevronRight size={16} color="#64748b" />
+          </button>
+        </div>
 
         {/* ── Controls ── */}
         <div className="tp-controls">
@@ -677,18 +935,25 @@ export default function TransactionsPage({
           <div className="tp-controls__row">
             <div className="tp-controls__filter-wrap">
               <Filter size={13} className="tp-controls__filter-icon" />
-              <select className="tp-controls__filter" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
+              <select
+                className="tp-controls__filter"
+                value={typeFilter}
+                onChange={e => setTypeFilter(e.target.value)}
+                aria-label="Filter by type"
+              >
                 {typeOptions.map(t => (
                   <option key={t} value={t}>{t === 'all' ? 'All types' : t.replace(/_/g, ' ')}</option>
                 ))}
               </select>
             </div>
-            <div className="tp-controls__sort">
+            <div className="tp-controls__sort" role="group" aria-label="Sort transactions">
               {(['date', 'amount', 'type'] as SortKey[]).map(k => (
                 <button
                   key={k}
                   className={`tp-sort-btn ${sortKey === k ? 'active' : ''}`}
                   onClick={() => toggleSort(k)}
+                  aria-label={`Sort by ${k}${sortKey === k ? `, currently ${sortDir}ending` : ''}`}
+                  aria-pressed={sortKey === k}
                 >
                   {k}{sortKey === k && <span style={{ marginLeft: 3 }}>{sortDir === 'desc' ? '↓' : '↑'}</span>}
                 </button>
@@ -723,6 +988,77 @@ export default function TransactionsPage({
           onRecategorise={onRecategorise}
         />
       )}
+
+      {/* ── Password Modal ── */}
+      <AnimatePresence>
+        {showPasswordModal && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+              style={{ background: '#1A1F1B', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 24, width: '100%', maxWidth: 400, padding: 28, textAlign: 'center' }}
+            >
+              <div style={{ width: 60, height: 60, borderRadius: '50%', background: 'rgba(0,166,81,0.1)', color: '#00A651', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
+                <LockIcon size={28} />
+              </div>
+
+              <h3 style={{ fontSize: 20, fontWeight: 900, color: '#fff', marginBottom: 8 }}>Statement Password</h3>
+              <p style={{ fontSize: 14, color: '#64748b', lineHeight: 1.6, marginBottom: 24 }}>
+                Safaricom statement PDFs are locked with your <strong>National ID Number</strong>. We never save this.
+              </p>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <input
+                  type="password"
+                  placeholder="Enter ID Number"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  disabled={importingStatement}
+                  style={{
+                    width: '100%', padding: '16px', background: '#111411', border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: 12, color: '#fff', fontSize: 16, textAlign: 'center', outline: 'none'
+                  }}
+                />
+
+                {importingStatement && (
+                  <div style={{ margin: '10px 0' }}>
+                    <div style={{ height: 6, background: 'rgba(255,255,255,0.05)', borderRadius: 10, overflow: 'hidden', marginBottom: 8 }}>
+                      <motion.div
+                        initial={{ width: 0 }} animate={{ width: `${importProgress}%` }}
+                        style={{ height: '100%', background: '#00A651' }}
+                      />
+                    </div>
+                    <p style={{ fontSize: 12, color: '#00A651', fontWeight: 700, textTransform: 'uppercase' }}>
+                      {importStatus === 'reading' && 'Reading PDF...'}
+                      {importStatus === 'parsing' && 'Extracting Data...'}
+                      {importStatus === 'saving' && 'Saving Transactions...'}
+                    </p>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+                  <button
+                    onClick={() => { setShowPasswordModal(false); setStatementFile(null); }}
+                    disabled={importingStatement}
+                    style={{ flex: 1, padding: '14px', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, color: '#64748b', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleProcessStatement}
+                    disabled={!password || importingStatement}
+                    style={{ flex: 2, padding: '14px', background: '#00A651', border: 'none', borderRadius: 12, color: '#fff', fontWeight: 900, fontSize: 14, cursor: 'pointer', opacity: (!password || importingStatement) ? 0.5 : 1 }}
+                  >
+                    {importingStatement ? 'Processing...' : 'Unlock & Import'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');

@@ -1,28 +1,18 @@
-import { NavLink, useLocation } from 'react-router-dom';
+﻿import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  LayoutDashboard,
-  ArrowDownToLine,
-  Receipt,
-  Target,
-  Users,
-  LogOut,
-  Wallet,
-  ChevronRight,
-  ShieldCheck,
-} from 'lucide-react';
+import { ArrowDownToLine, ChevronRight, LayoutDashboard, LogOut, Receipt, Settings, ShieldCheck, Target, User, Users, Wallet, X } from 'lucide-react';
 
-// ─── Nav items ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Nav items â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const NAV_ITEMS = [
   { to: '/dashboard',    label: 'Dashboard',    icon: LayoutDashboard, accent: '#10b981' },
   { to: '/transactions', label: 'Transactions', icon: Receipt,         accent: '#3b82f6' },
-  { to: '/campaigns',    label: 'Campaigns',    icon: Target,          accent: '#f59e0b' },
   { to: '/import',       label: 'Import SMS',   icon: ArrowDownToLine, accent: '#a78bfa' },
   { to: '/chama',        label: 'Chama',        icon: Users,           accent: '#34d399' },
+  { to: '/settings',     label: 'Account',      icon: User,            accent: '#818cf8' },
 ];
 
-// ─── Token map ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Token map â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const C = {
   bg:          '#080d1a',
   sidebar:     '#0a0f1e',
@@ -34,7 +24,7 @@ const C = {
   primaryGlow: 'rgba(16,185,129,0.15)',
 };
 
-// ─── Sidebar (desktop) ────────────────────────────────────────────────────────
+// â”€â”€â”€ Sidebar (desktop) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export function Sidebar() {
   const { user, profile, signOut } = useAuth();
   const location = useLocation();
@@ -199,7 +189,7 @@ export function Sidebar() {
   );
 }
 
-// ─── Bottom tab bar (mobile) ──────────────────────────────────────────────────
+// â”€â”€â”€ Bottom tab bar (mobile) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export function BottomNav() {
   const { profile } = useAuth();
   const location = useLocation();

@@ -1,8 +1,8 @@
-import React, { useState, useMemo } from 'react';
+﻿import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { Plus, Trash2, Loader2, Target } from 'lucide-react';
+import { Filter, Loader2, Plus, Target, Trash2, X } from 'lucide-react';
 import { getCampaigns, deleteCampaign } from '@/features/campaigns/campaignService';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -121,3 +121,4 @@ export default function CampaignsPage() {
     </div>
   );
 }
+

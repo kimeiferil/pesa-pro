@@ -1,24 +1,48 @@
-﻿import { createClient } from '@supabase/supabase-js';
+﻿import { createClient } from '@supabase/supabase-js'
 
-// Hardcoded fallback so the app never crashes on missing env vars
-const supabaseUrl =
-  (import.meta.env?.VITE_SUPABASE_URL as string) ||
-  'https://hunetmmhnbaizaqnycji.supabase.co';
+const supabaseUrl  = import.meta.env.VITE_SUPABASE_URL  as string
+const supabaseAnon = import.meta.env.VITE_SUPABASE_ANON_KEY as string
 
-const supabaseAnonKey =
-  (import.meta.env?.VITE_SUPABASE_ANON_KEY as string) ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh1bmV0bW1obmJhaXphcW55Y2ppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyMjQyMTIsImV4cCI6MjA5MjgwMDIxMn0.snjf6ea6xLS_xdg1GFJYRABAhuL0NwrnZfeeNnshKro';
+if (!supabaseUrl || !supabaseAnon) {
+  throw new Error(
+    '[Pesa Pro] VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY is missing from .env.\n' +
+    'Copy .env.example to .env and fill in your Supabase project credentials.'
+  )
+}
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase = createClient(supabaseUrl, supabaseAnon, {
   auth: {
-    persistSession:    true,
-    autoRefreshToken:  true,
-    detectSessionInUrl: true,
+    autoRefreshToken: true,
+    persistSession:   true,
+    detectSessionInUrl: false,   // Capacitor handles deep links differently
   },
-});
+  realtime: {
+    params: { eventsPerSecond: 10 },
+  },
+})
 
-// Keep these exports so existing imports don't break
-export const supabaseBase = supabase;
-export function handleSupabaseError(error: any): Error {
-  return error instanceof Error ? error : new Error(String(error?.message ?? 'Unknown error'));
+export type Database = {
+  public: {
+    Tables: {
+      transactions:      { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      categories:        { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      budgets:           { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      groups:            { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      group_members:     { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      group_transactions:{ Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      savings_goals:     { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      debts:             { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      profiles:         { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      businesses:       { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      business_members: { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      roles:            { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      member_roles:     { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      products:         { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      sales:            { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      sale_items:       { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      suppliers:        { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      inventory_purchases:      { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+      inventory_purchase_items: { Row: Record<string, unknown>; Insert: Record<string, unknown>; Update: Record<string, unknown> }
+    }
+  }
 }

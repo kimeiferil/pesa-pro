@@ -15,18 +15,14 @@ import {
   PieChart, Pie, Cell, Tooltip as RTooltip, Legend,
   ResponsiveContainer, XAxis, YAxis, CartesianGrid,
 } from 'recharts';
-import {
-  Home, CreditCard, Compass, User,
-  Phone, ShoppingBag,
-  BarChart2, Gift, Globe, PiggyBank,
-  Bell, Search, MoreVertical, Zap,
-  QrCode, FileText, RefreshCw, LogOut,
-  TrendingUp, AlertCircle, Tag,
-  X, Settings, Lock, ChevronRight,
-  MessageCircle, Mail, HelpCircle, Eye, EyeOff,
-  Star, Crown, Check, Sparkles,
-} from 'lucide-react';
+import { AlertCircle, BarChart2, Bell, Building2, Check, ChevronDown, ChevronRight, Clock, Compass, CreditCard, Crown, Download, Eye, EyeOff, FileText, Filter, Gift, Globe, HelpCircle, Home, Lock, LogOut, Mail, MessageCircle, MoreVertical, Phone, PiggyBank, Plus, QrCode, RefreshCw, Search, Settings, Share2, ShieldCheck, ShoppingBag, Sparkles, Star, Tag, Target, Trash2, TrendingDown, TrendingUp, Unlock, User, Wallet, X, Zap } from 'lucide-react';
 import type { ParsedTransaction } from '../../shared/mpesaParser';
+import { useBusinesses } from '../../hooks/useBusinesses';
+import { useCashFlowWarning } from '../../hooks/useCashFlowWarning';
+import { useDebts } from '../../hooks/useDebts';
+import { useBudgets } from '../../hooks/useBudgets';
+import { useSavingsGoals, useNetWorth, useRecurringPayments } from '../../services/v2Service';
+import { motion } from 'framer-motion';
 
 // --- Plan config --------------------------------------------------------------
 export type Plan = 'basic' | 'pro' | 'premium';
@@ -433,19 +429,31 @@ function SearchModal({ onClose }: { onClose: () => void }) {
 
 // --- MenuModal ---------------------------------------------------------------
 // Updated: removed Statements/Offers items; Settings/Security now navigate properly
-function MenuModal({ onClose, onSupport, onPlans, onSignOut, onNavigate }: {
+function MenuModal({ onClose, onSupport, onPlans, onSignOut, onNavigate, onSwitchBusiness, isAdmin }: {
   onClose: () => void;
   onSupport: () => void;
   onPlans: () => void;
   onSignOut?: () => void;
   onNavigate?: (path: string) => void;
+  onSwitchBusiness: () => void;
+  isAdmin: boolean;
 }) {
   const items = [
+    {
+      icon: <Building2 size={18} />,
+      label: 'Switch Business',
+      action: () => { onClose(); onSwitchBusiness(); },
+    },
     {
       icon: <Settings   size={18} />,
       label: 'Settings',
       action: () => { onClose(); onNavigate?.('/settings'); },
     },
+    ...(isAdmin ? [{
+      icon: <ShieldCheck size={18} />,
+      label: 'Admin Panel',
+      action: () => { onClose(); onNavigate?.('/admin'); },
+    }] : []),
     {
       icon: <Lock       size={18} />,
       label: 'Security & Privacy',
@@ -595,7 +603,7 @@ function CashFlowChart({ data, screen }: {
             tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)} />
           <RTooltip
             contentStyle={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, color: '#1e293b', fontSize: 12 }}
-            formatter={(v: number) => [`KES ${fmt(v)}`, undefined]}
+            formatter={(v: unknown) => [`KES ${fmt(v as number)}`, undefined]}
           />
           <Legend wrapperStyle={{ fontSize: 12, color: '#64748b', paddingTop: 8 }} />
           <Area type="monotone" dataKey="Inflow"  stroke="#22c55e" strokeWidth={2} fill="url(#gradIn)"  dot={{ r: 4, fill: '#22c55e' }} />
@@ -626,7 +634,7 @@ function SpendChart({ data, total, screen }: {
           </Pie>
           <RTooltip
             contentStyle={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, color: '#1e293b', fontSize: 12 }}
-            formatter={(v: number) => [`KES ${fmt(v)} (${total ? ((v / total) * 100).toFixed(0) : 0}%)`, undefined]}
+            formatter={(v: unknown) => [`KES ${fmt(v as number)} (${total ? (((v as number) / total) * 100).toFixed(0) : 0}%)`, undefined]}
           />
         </PieChart>
       </ResponsiveContainer>
@@ -680,6 +688,85 @@ function QuickStats({ transactions }: { transactions: ParsedTransaction[] }) {
   );
 }
 
+// --- Smart Insights Card ------------------------------------------------------
+function SmartInsightsCard({ transactions = [], cashFlow, debts = [], budgets = [], onNav }: any) {
+  const signal = useMemo(() => {
+    // 1. Budget signals
+    const overBudgets = (budgets || []).filter((b: any) => {
+      const spent = (transactions || [])
+        .filter((t: any) => (t.category === b.category || t.category === 'other') && t.type !== 'received')
+        .reduce((s: number, t: any) => s + Math.abs(t.amount || 0), 0);
+      return spent >= b.amount * 0.8;
+    });
+
+    if (overBudgets.length > 0) {
+      const b = overBudgets[0];
+      const spent = (transactions || [])
+        .filter((t: any) => t.category === b.category && t.type !== 'received')
+        .reduce((s: number, t: any) => s + Math.abs(t.amount || 0), 0);
+      const pct = b.amount > 0 ? Math.round((spent / b.amount) * 100) : 0;
+      return {
+        title: 'Budget Alert',
+        text: `You've used ${pct}% of your ${b.category} budget.`,
+        color: '#f59e0b', icon: <Target size={18} />, action: 'Review'
+      };
+    }
+
+    // 2. Meaningful Cash Flow gap (>10%)
+    if (cashFlow && cashFlow.status !== 'healthy' && Array.isArray(cashFlow.days) && cashFlow.days.length > 0) {
+      const avgIn  = cashFlow.days.reduce((s: number, d: any) => s + (d.inflow || 0), 0) / cashFlow.days.length;
+      const avgOut = cashFlow.days.reduce((s: number, d: any) => s + (d.outflow || 0), 0) / cashFlow.days.length;
+      const gap = avgOut - avgIn;
+      if (avgIn > 0 && gap > avgIn * 0.1) {
+        return {
+          title: 'Cash Flow Notice',
+          text: `Outflows exceed inflows by ${Math.round((gap/avgIn)*100)}% this week.`,
+          color: '#ef4444', icon: <TrendingDown size={18} />, action: 'View'
+        };
+      }
+    }
+
+    // 3. Debt signals
+    const activeDebts = (debts || []).filter((d: any) => d.status === 'active');
+    if (activeDebts.length > 0) {
+      const total = activeDebts.reduce((s: number, d: any) => s + (d.amount || 0), 0);
+      return {
+        title: 'Outstanding Debts',
+        text: `You have ${activeDebts.length} unpaid items totalling KES ${total.toLocaleString()}.`,
+        color: '#3b82f6', icon: <AlertCircle size={18} />, action: 'Review'
+      };
+    }
+
+    // Default: Healthy pulse
+    return {
+      title: 'Finance Pulse',
+      text: 'Your spending is stable. Keep syncing those SMS messages!',
+      color: '#10b981', icon: <Check size={18} />, action: 'Sync'
+    };
+  }, [transactions, cashFlow, debts, budgets]);
+
+  return (
+    <div style={{
+      background: `${signal.color}12`,
+      border: `1px solid ${signal.color}30`,
+      borderRadius: 18, padding: '14px 16px', marginBottom: 16,
+      display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer'
+    }} onClick={() => onNav('transactions')}>
+      <div style={{
+        width: 38, height: 38, borderRadius: 12, background: `${signal.color}18`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center'
+      }}>
+        {(React.cloneElement(signal.icon as React.ReactElement<any>, { color: signal.color }) as React.ReactElement)}
+      </div>
+      <div style={{ flex: 1 }}>
+        <p style={{ fontSize: 13, fontWeight: 800, color: '#f8fafc', margin: 0 }}>{signal.title}</p>
+        <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 3, lineHeight: 1.4 }}>{signal.text}</p>
+      </div>
+      <ChevronRight size={14} color="#475569" />
+    </div>
+  );
+}
+
 // --- Header actions ----------------------------------------------------------
 function HeaderActions({ onSearch, onMenu }: {
   onSearch: () => void;
@@ -703,11 +790,10 @@ const WALLET_SERVICES = [
 ] as const;
 
 const HOME_FEATURES = [
-  { label: 'Transactions', Icon: BarChart2,   page: 'transactions' as const, desc: 'View full history',  emoji: '\u{1F4C8}', feature: ''          },
-  { label: 'Campaigns',    Icon: Gift,        page: 'campaigns'    as const, desc: 'Active offers',       emoji: '\u{1F381}', feature: 'campaigns' },
-  { label: 'Import SMS',   Icon: Phone,       page: 'import'       as const, desc: 'Sync M-PESA SMS',     emoji: '\u{1F4F1}', feature: ''          },
-  { label: 'Chama',        Icon: ShoppingBag, page: 'chama'        as const, desc: 'Group savings',       emoji: '\u{1F465}', feature: 'chama'     },
-  { label: 'Analytics',    Icon: TrendingUp,  page: undefined,               desc: 'Spending insights',   emoji: '\u{1F4CA}', feature: 'analytics' },
+  { label: 'Transactions', Icon: BarChart2,   page: 'transactions' as const, desc: 'View full history',  emoji: "\u{1F4C8}", feature: ''          },
+  { label: 'Import SMS',   Icon: Phone,       page: 'import'       as const, desc: 'Sync M-PESA SMS',    emoji: "\u{1F4F1}", feature: ''          },
+  { label: 'Chama Groups', Icon: ShoppingBag, page: 'chama'        as const, desc: 'Group savings circle', emoji: "\u{1F465}", feature: 'chama'     },
+  { label: 'Campaigns',    Icon: Gift,        page: 'campaigns'    as const, desc: 'Active fundraisings', emoji: "\u{1F381}", feature: 'campaigns' },
 ] as const;
 
 const BOTTOM_NAV = [
@@ -718,9 +804,267 @@ const BOTTOM_NAV = [
   { id: 'account'  as NavTab, label: 'Account',  Icon: User,       },
 ] as const;
 
-// --- Main component ----------------------------------------------------------
+// --- Budget Engine -------------------------------------------------------------
+function BudgetEngine({ transactions = [], businessId, fmt, onOpenSetup }: { transactions: ParsedTransaction[], businessId: string | null, fmt: (n: number) => string, onOpenSetup: () => void }) {
+  const { budgets = [] } = useBudgets(businessId);
+
+  const budgetData = useMemo(() => {
+    const map: Record<string, { spent: number; last?: ParsedTransaction }> = {};
+    const txns = transactions || [];
+
+    // Process transactions in chronological order to find the "last" one for each category
+    const sorted = [...txns].sort((a, b) => {
+      const da = a.date ? new Date(`${a.date} ${a.time ?? ''}`).getTime() : 0;
+      const db = b.date ? new Date(`${b.date} ${b.time ?? ''}`).getTime() : 0;
+      return db - da; // Descending
+    });
+
+    txns.forEach(t => {
+      if (t.amount && t.type !== 'received' && t.type !== 'deposit' && t.type !== 'balance_check') {
+        const cat = t.category || 'other';
+        if (!map[cat]) map[cat] = { spent: 0 };
+        map[cat].spent += Math.abs(t.amount);
+      }
+    });
+
+    // Pick the most recent one for each cat
+    Object.keys(map).forEach(cat => {
+      map[cat].last = sorted.find(t => t.category === cat);
+    });
+
+    return map;
+  }, [transactions]);
+
+  const now = new Date();
+  const dayOfMonth = Math.max(1, now.getDate());
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+
+  if (!budgets || budgets.length === 0) {
+    return (
+      <div
+        onClick={onOpenSetup}
+        style={{
+          background: 'rgba(255,255,255,0.03)', borderRadius: 20, padding: 18,
+          border: '1px dashed rgba(255,255,255,0.15)', marginBottom: 16,
+          display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer'
+        }}
+      >
+        <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(16,185,129,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Target size={18} color="#10b981" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <p style={{ fontSize: 13, fontWeight: 800, color: '#fff', margin: 0 }}>Smart Budget Engine</p>
+          <p style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>Set monthly limits for food, rent, etc.</p>
+        </div>
+        <Plus size={16} color="#64748b" />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 20, padding: 18, border: '1px solid rgba(255,255,255,0.07)', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Target size={18} color="#10b981" />
+          <h3 style={{ fontSize: 14, fontWeight: 800, color: '#fff', margin: 0 }}>Monthly Budgets</h3>
+        </div>
+        <button
+          onClick={onOpenSetup}
+          style={{ background: 'none', border: 'none', color: '#10b981', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+        >
+          Edit
+        </button>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {budgets.map(b => {
+          const stats = budgetData[b.category] || { spent: 0 };
+          const spent = stats.spent;
+          const limit = b.amount || 1; // Prevent div by zero
+          const pct = Math.min(Math.round((spent / limit) * 100), 100);
+          const color = pct >= 90 ? '#ef4444' : pct >= 75 ? '#f59e0b' : '#10b981';
+
+          const projectedSpend = (spent / dayOfMonth) * daysInMonth;
+          const projectedOverrun = projectedSpend - b.amount;
+
+          return (
+            <div key={b.id}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#f1f5f9', textTransform: 'capitalize' }}>{b.category}</span>
+                <span style={{ fontSize: 12, fontWeight: 800, color: '#fff' }}>{fmt(spent)} / {fmt(b.amount)}</span>
+              </div>
+
+              <div style={{ height: 8, background: 'rgba(255,255,255,0.05)', borderRadius: 10, overflow: 'hidden' }}>
+                <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 10, transition: 'width 0.5s ease' }} />
+              </div>
+
+              {/* Context line: Last transaction */}
+              {stats.last && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 6 }}>
+                  <Clock size={10} color="#64748b" />
+                  <span style={{ fontSize: 10, color: '#64748b' }}>
+                    Last: {stats.last.name || stats.last.business || 'Unknown'} Â· {fmt(stats.last.amount || 0)} Â· {stats.last.date === now.toISOString().split('T')[0] ? 'Today' : stats.last.date}
+                  </span>
+                </div>
+              )}
+
+              {/* Predictive line */}
+              {projectedOverrun > 0 && dayOfMonth > 2 && (
+                <p style={{ fontSize: 10, color: '#ef4444', marginTop: 4, fontWeight: 700 }}>
+                  {"\u{26A0}\u{FE0F}"} At this pace, you'll overspend by {fmt(projectedOverrun)}
+                </p>
+              )}
+              {pct >= 80 && projectedOverrun <= 0 && (
+                <p style={{ fontSize: 10, color: color, marginTop: 4, fontWeight: 700 }}>
+                  {"\u{26A0}\u{FE0F}"} {pct >= 100 ? 'Budget Exceeded' : 'Approaching limit'}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// --- Budget Setup Modal --------------------------------------------------------
+function BudgetSetupModal({ businessId, onClose }: { businessId: string | null, onClose: () => void }) {
+  const { budgets, saveBudget } = useBudgets(businessId);
+  const [editing, setEditing] = useState<Record<string, { amount: string, rollover: boolean }>>({});
+
+  useEffect(() => {
+    const initial: Record<string, { amount: string, rollover: boolean }> = {};
+    budgets.forEach(b => {
+      initial[b.category] = { amount: b.amount.toString(), rollover: b.rollover };
+    });
+    setEditing(initial);
+  }, [budgets]);
+
+  const categories = ['food', 'rent', 'transport', 'shopping', 'utilities', 'healthcare', 'education', 'savings', 'other'];
+
+  return (
+    <div style={{ padding: 24 }}>
+      <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Set Monthly Budgets</h3>
+      <p style={{ fontSize: 13, color: '#64748b', marginBottom: 20 }}>How much do you want to spend per month?</p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {categories.map(cat => (
+          <div key={cat}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+              <label style={{ flex: 1, fontSize: 13, fontWeight: 700, textTransform: 'capitalize' }}>{cat}</label>
+              <div style={{ position: 'relative', width: 120 }}>
+                <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 11, color: '#64748b' }}>KES</span>
+                <input
+                  type="number"
+                  placeholder="0"
+                  value={editing[cat]?.amount || ''}
+                  onChange={e => setEditing({ ...editing, [cat]: { ...editing[cat], amount: e.target.value } })}
+                  onBlur={() => {
+                    const val = parseFloat(editing[cat]?.amount || '0');
+                    saveBudget(cat, val, editing[cat]?.rollover || false);
+                  }}
+                  style={{ width: '100%', padding: '10px 10px 10px 40px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, color: '#fff', fontSize: 14, textAlign: 'right' }}
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 4 }}>
+              <input
+                type="checkbox"
+                checked={editing[cat]?.rollover || false}
+                onChange={e => {
+                  const r = e.target.checked;
+                  setEditing({ ...editing, [cat]: { ...editing[cat], rollover: r } });
+                  saveBudget(cat, parseFloat(editing[cat]?.amount || '0'), r);
+                }}
+              />
+              <span style={{ fontSize: 11, color: '#64748b' }}>Rollover unspent amount to next month</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button
+        onClick={onClose}
+        style={{ width: '100%', marginTop: 24, padding: 14, background: '#10b981', border: 'none', borderRadius: 12, color: '#022c22', fontWeight: 800, fontSize: 14, cursor: 'pointer' }}
+      >
+        Done
+      </button>
+    </div>
+  );
+}
+
+// --- Net Worth Tracker --------------------------------------------------------
+function NetWorthWidget() {
+  const { data, isLoading } = useNetWorth();
+  if (isLoading || !data) return null;
+
+  return (
+    <div style={{ background: '#1A1F1B', borderRadius: 20, padding: 18, border: '1px solid rgba(255,255,255,0.07)', marginBottom: 16 }}>
+      <p style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }}>Estimated Net Worth</p>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <h2 style={{ fontSize: 28, fontWeight: 900, color: '#00A651', margin: 0 }}>KES {data.total.toLocaleString('en-KE')}</h2>
+      </div>
+      <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
+        <div style={{ flex: 1 }}>
+          <p style={{ fontSize: 10, color: '#64748b', margin: 0 }}>M-PESA</p>
+          <p style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{data.mpesa.toLocaleString()}</p>
+        </div>
+        <div style={{ flex: 1 }}>
+          <p style={{ fontSize: 10, color: '#64748b', margin: 0 }}>Assets/SACCO</p>
+          <p style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{(data.total - data.mpesa).toLocaleString()}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Goal Jars ----------------------------------------------------------------
+function GoalJars() {
+  const { data: goals } = useSavingsGoals();
+  if (!goals || goals.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <p className="pp-section-label">Savings Jars</p>
+      <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 8 }}>
+        {goals.map(goal => {
+          const pct = Math.min(Math.round((goal.current_amount / goal.target_amount) * 100), 100);
+          return (
+            <div key={goal.id} style={{ minWidth: 140, background: '#1A1F1B', borderRadius: 16, padding: 14, border: '1px solid rgba(255,255,255,0.07)' }}>
+              <div style={{ fontSize: 24, marginBottom: 8 }}>{goal.emoji}</div>
+              <p style={{ fontSize: 13, fontWeight: 800, color: '#fff', margin: 0 }}>{goal.name}</p>
+              <div style={{ height: 4, background: 'rgba(255,255,255,0.05)', borderRadius: 2, margin: '10px 0 6px', overflow: 'hidden' }}>
+                <div style={{ width: `${pct}%`, height: '100%', background: goal.color, borderRadius: 2 }} />
+              </div>
+              <p style={{ fontSize: 11, fontWeight: 700, color: goal.color }}>{pct}% saved</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// --- Recurring Alert ---------------------------------------------------------
+function RecurringAlerts() {
+  const { data: payments } = useRecurringPayments();
+  if (!payments || payments.length === 0) return null;
+
+  return (
+    <div style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 16, padding: 14, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+      <Zap size={20} color="#3b82f6" />
+      <div style={{ flex: 1 }}>
+        <p style={{ fontSize: 13, fontWeight: 700, color: '#f8fafc', margin: 0 }}>Upcoming Debit</p>
+        <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
+          {payments[0].merchant} (KES {payments[0].amount.toLocaleString()}) expected {payments[0].next_expected_date}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// --- Main Component ----------------------------------------------------------
 export default function DashboardPage({
-  transactions = [],
+  transactions: allTransactions = [],
   username     = 'User',
   mfaEnabled   = false,
   plan         = 'basic',
@@ -728,14 +1072,29 @@ export default function DashboardPage({
   onNavigate,
   onUpgrade,
 }: Props) {
+  const profile: { role?: string } | null = null; // TODO: fetch from useAuth when wired
   const screen = useScreen();
+  const {
+    businesses, currentBusiness, currentBusinessId,
+    switchBusiness, createBusiness, deleteBusiness, generateMentorLink, loading: bizLoading
+  } = useBusinesses();
+
+  const transactions = useMemo(() => {
+    if (!currentBusinessId) return allTransactions.filter(t => !t.business_id);
+    return allTransactions.filter(t => t.business_id === currentBusinessId);
+  }, [allTransactions, currentBusinessId]);
+
   const data   = useDashboardData(transactions);
   const { config: planConfig, isLocked, canAccess } = usePlan(plan);
+  const { result: cashFlowWarning } = useCashFlowWarning(currentBusinessId);
+  const { debts = [], summary: debtSummary } = useDebts(currentBusinessId);
+  const { budgets = [] } = useBudgets(currentBusinessId);
 
   const [tab,            setTab           ] = useState<NavTab>('home');
   const [balanceVisible, setBalanceVisible] = useState(false);
-  const [modal,          setModal         ] = useState<Modal>(null);
+  const [modal,          setModal         ] = useState<Modal | 'business_selector' | 'add_business' | 'budget_setup'>(null);
   const [supportOpen,    setSupportOpen   ] = useState(false);
+  const [newBizName,     setNewBizName    ] = useState('');
 
   const isLaptop    = screen === 'laptop';
 
@@ -761,7 +1120,7 @@ export default function DashboardPage({
       {isLaptop && (
         <aside className="pp-sidebar">
           <div className="pp-sidebar-logo">
-            <span className="pp-logo-icon">💳</span>
+            <span className="pp-logo-icon">{"\u{1F4B3}"}</span>
             <span className="pp-logo-text">PesaPro</span>
           </div>
           <div style={{ padding: '8px 20px 14px' }}>
@@ -788,7 +1147,7 @@ export default function DashboardPage({
               );
             })}
             <button className="pp-sidebar-item" onClick={openSupport}>
-              <span style={{ fontSize: 16 }}>💬</span>
+              <span style={{ fontSize: 16 }}>{"\u{1F4AC}"}</span>
               <HelpCircle size={18} strokeWidth={1.75} />
               <span>Support</span>
             </button>
@@ -825,7 +1184,10 @@ export default function DashboardPage({
               <div className="pp-header-topbar">
                 {mfaEnabled && <span className="pp-mfa-badge">MFA</span>}
                 <PlanBadge plan={plan} />
-                <div style={{ flex: 1 }} />
+
+                <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
+                </div>
+
                 <HeaderActions
                   onSearch={() => setModal('search')}
                   onMenu  ={() => setModal('menu')}
@@ -847,6 +1209,17 @@ export default function DashboardPage({
             </header>
 
             <main className="pp-body">
+              <NetWorthWidget />
+              <RecurringAlerts />
+              <SmartInsightsCard
+                transactions={transactions}
+                cashFlow={cashFlowWarning}
+                debts={debts}
+                budgets={budgets}
+                onNav={handleNav}
+              />
+              <GoalJars />
+
               <UpgradeNudge plan={plan} onUpgrade={openPlans} />
 
               <div className="pp-two-col">
@@ -861,17 +1234,10 @@ export default function DashboardPage({
                 </div>
                 <div className="pp-helper-stack">
                   <button className="pp-helper-card" onClick={openSupport}>
-                    <span style={{ fontSize: 20 }}>🆘</span>
+                    <span style={{ fontSize: 20 }}>{"\u{1F198}"}</span>
                     <div>
                       <p className="pp-helper-title">Get Help</p>
                       <p className="pp-helper-sub">{plan === 'premium' ? 'Priority support' : 'Chat & support'}</p>
-                    </div>
-                  </button>
-                  <button className="pp-helper-card" onClick={() => handleNav('transactions')}>
-                    <span style={{ fontSize: 20 }}>📊</span>
-                    <div>
-                      <p className="pp-helper-title">Transactions</p>
-                      <p className="pp-helper-sub">View history</p>
                     </div>
                   </button>
                 </div>
@@ -897,12 +1263,25 @@ export default function DashboardPage({
                   );
                 })}
                 <button className="pp-feature-card" onClick={openSupport}>
-                  <span className="pp-feature-icon"><span style={{ fontSize: 18 }}>💬</span></span>
+                  <span className="pp-feature-icon"><span style={{ fontSize: 18 }}>{"\u{1F4AC}"}</span></span>
                   <div className="pp-feature-text">
                     <p className="pp-feature-title">Support</p>
                     <p className="pp-feature-desc">{plan === 'premium' ? 'Priority 24/7' : "We're here"}</p>
                   </div>
                 </button>
+              </div>
+
+              <div className="pp-section-label">Business Health</div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div className="pp-card" style={{ padding: '14px' }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>Owed to You</p>
+                  <p style={{ fontSize: 18, fontWeight: 800, color: '#00C851', marginTop: 4 }}>KES {fmt(debtSummary.totalOwedToUs)}</p>
+                </div>
+                <div className="pp-card" style={{ padding: '14px' }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>Owed by You</p>
+                  <p style={{ fontSize: 18, fontWeight: 800, color: '#ef4444', marginTop: 4 }}>KES {fmt(debtSummary.totalOwedByUs)}</p>
+                </div>
               </div>
 
               <div className="pp-section-label">Analytics</div>
@@ -912,21 +1291,23 @@ export default function DashboardPage({
                 <p className={`pp-balance-amount ${data.net < 0 ? 'neg' : 'pos'}`}>
                   {balanceVisible
                     ? `KES ${data.net < 0 ? '-' : ''}${fmt(Math.abs(data.net))}`
-                    : '••••••••'}
+                    : '••••••'}
                 </p>
                 <div className="pp-balance-row">
                   <div className="pp-balance-item">
-                    <span className="pp-arrow pp-arrow--in">↑</span><span>Inflow</span>
-                    <strong>{balanceVisible ? `KES ${fmt(data.totalIn)}` : '••••'}</strong>
+                    <span className="pp-arrow pp-arrow--in">?</span><span>Inflow</span>
+                    <strong>{balanceVisible ? `KES ${fmt(data.totalIn)}` : '••••••'}</strong>
                   </div>
                   <div className="pp-balance-item">
-                    <span className="pp-arrow pp-arrow--out">↓</span><span>Outflow</span>
-                    <strong>{balanceVisible ? `KES ${fmt(data.totalOut)}` : '••••'}</strong>
+                    <span className="pp-arrow pp-arrow--out">?</span><span>Outflow</span>
+                    <strong>{balanceVisible ? `KES ${fmt(data.totalOut)}` : '••••••'}</strong>
                   </div>
                 </div>
               </div>
 
               <QuickStats transactions={transactions} />
+
+              <BudgetEngine transactions={transactions} businessId={currentBusinessId} fmt={fmt} onOpenSetup={() => setModal('budget_setup')} />
 
               <LockedGate feature="charts" plan={plan} onUpgrade={openPlans}>
                 <div className={screen === 'laptop' ? 'pp-chart-row' : 'pp-chart-stack'}>
@@ -1008,6 +1389,7 @@ export default function DashboardPage({
               </div>
               <p className="pp-section-label" style={{ marginTop: 20 }}>Analytics</p>
               <QuickStats transactions={transactions} />
+              <BudgetEngine transactions={transactions} businessId={currentBusinessId} fmt={fmt} onOpenSetup={() => setModal('budget_setup')} />
               <LockedGate feature="charts" plan={plan} onUpgrade={openPlans}>
                 <div style={{ marginTop: 12 }}>
                   <CashFlowChart data={data.cashFlow} screen={screen} />
@@ -1041,9 +1423,9 @@ export default function DashboardPage({
                 <>
                   <p className="pp-section-label">Active Offers</p>
                   {[
-                    { emoji: '🛒', title: 'Supermarket Cashback', sub: 'Get 5% back on groceries',  tag: 'Ends in 2 days' },
-                    { emoji: '⛽', title: 'Fuel Discount',         sub: 'Save KES 10/L at partners', tag: 'Ongoing'        },
-                    { emoji: '📺', title: 'Streaming Bundle',      sub: 'Free 1-month with Fuliza',  tag: 'Limited'        },
+                    { emoji: "\u{1F6D2}", title: 'Supermarket Cashback', sub: 'Get 5% back on groceries',  tag: 'Ends in 2 days' },
+                    { emoji: "\u26FD", title: 'Fuel Discount',         sub: 'Save KES 10/L at partners', tag: 'Ongoing'        },
+                    { emoji: "\u{1F4FA}", title: 'Streaming Bundle',      sub: 'Free 1-month with Fuliza',  tag: 'Limited'        },
                   ].map(({ emoji, title, sub, tag }) => (
                     <div key={title} className="pp-helper-card" style={{ borderRadius: 14 }}>
                       <div className="pp-helper-icon" style={{ fontSize: 22, width: 44, height: 44 }}>{emoji}</div>
@@ -1099,9 +1481,9 @@ export default function DashboardPage({
 
               <p className="pp-section-label">Account Settings</p>
               {[
-                { emoji: '👤', label: 'Profile',       sub: 'Edit your details'  },
-                { emoji: '🔒', label: 'Security',       sub: 'PIN & biometrics'   },
-                { emoji: '💳', label: 'Linked Cards',   sub: 'M-PESA & bank'     },
+                { emoji: '??', label: 'Profile',       sub: 'Edit your details'  },
+                { emoji: '??', label: 'Security',       sub: 'PIN & biometrics'   },
+                { emoji: '??', label: 'Linked Cards',   sub: 'M-PESA & bank'     },
               ].map(({ emoji, label, sub }) => (
                 <div key={label} className="pp-helper-card" style={{ borderRadius: 12 }}>
                   <div className="pp-helper-icon" style={{ fontSize: 18 }}>{emoji}</div>
@@ -1114,7 +1496,7 @@ export default function DashboardPage({
               ))}
 
               <button className="pp-helper-card" style={{ borderRadius: 12 }} onClick={openPlans}>
-                <div className="pp-helper-icon" style={{ fontSize: 18, background: '#fef3c7', color: '#f59e0b' }}>⭐</div>
+                <div className="pp-helper-icon" style={{ fontSize: 18, background: '#fef3c7', color: '#f59e0b' }}>{"\u2B50"}</div>
                 <div style={{ flex: 1 }}>
                   <p className="pp-helper-title">Manage Plan</p>
                   <p className="pp-helper-sub">Currently on {planConfig.name}</p>
@@ -1123,7 +1505,7 @@ export default function DashboardPage({
               </button>
 
               <button className="pp-helper-card" style={{ borderRadius: 12 }} onClick={openSupport}>
-                <div className="pp-helper-icon" style={{ fontSize: 18 }}>💬</div>
+                <div className="pp-helper-icon" style={{ fontSize: 18 }}>{"\u{1F4AC}"}</div>
                 <div style={{ flex: 1 }}>
                   <p className="pp-helper-title">Help &amp; Support</p>
                   <p className="pp-helper-sub">{plan === 'premium' ? 'Priority support' : 'WhatsApp, email & more'}</p>
@@ -1167,6 +1549,11 @@ export default function DashboardPage({
       </div>
 
       {modal === 'search'        && <SearchModal        onClose={closeModal} />}
+      {modal === 'budget_setup'   && (
+        <div role="dialog" aria-modal="true" style={{position:'fixed',inset:0,zIndex:1000,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center'}}><div style={{background:'#fff',borderRadius:16,padding:24,maxWidth:480,width:'90%',maxHeight:'80vh',overflowY:'auto'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}><h2 style={{fontSize:18,fontWeight:700}}>Budgeting</h2><button onClick={closeModal} style={{background:'none',border:'none',cursor:'pointer',fontSize:20}}>×</button></div>
+          <BudgetSetupModal businessId={currentBusinessId} onClose={closeModal} />
+        </div></div>
+      )}
       {modal === 'menu'          && (
         <MenuModal
           onClose={closeModal}
@@ -1177,9 +1564,102 @@ export default function DashboardPage({
             closeModal();
             onNavigate?.(path as any);  // handles /settings, /mfa via App.tsx
           }}
+          onSwitchBusiness={() => setModal('business_selector')}
+          isAdmin={profile?.role === 'admin'}
         />
       )}
       {modal === 'plans'         && <PlansModal currentPlan={plan} onClose={closeModal} onSelect={handleUpgrade} />}
+
+      {modal === 'business_selector' && (
+        <BottomSheet title="Switch Business" onClose={closeModal}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {businesses.map(b => (
+              <button
+                key={b.id}
+                onClick={() => { switchBusiness(b.id); closeModal(); }}
+                style={{
+                  ...S.menuItem,
+                  background: b.id === currentBusinessId ? '#e8fdf0' : 'transparent',
+                  color: b.id === currentBusinessId ? '#00C851' : '#0f172a',
+                  padding: '12px 16px', borderRadius: 12, border: 'none'
+                }}
+              >
+                <Building2 size={18} style={{ marginRight: 10 }} />
+                <span style={{ flex: 1 }}>{b.name}</span>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      const token = await generateMentorLink(b.id);
+                      if (token) {
+                        const url = `${window.location.origin}/mentor/${token}`;
+                        await navigator.clipboard.writeText(url);
+                        alert('Mentor link copied to clipboard!\n\nThis link will allow someone to view your business health for 30 days.');
+                      } else {
+                        alert('Failed to generate mentor link. Please try again.');
+                      }
+                    }}
+                    style={{ background: 'none', border: 'none', color: '#64748b', padding: 4, cursor: 'pointer' }}
+                    title="Copy Mentor Link"
+                  >
+                    <Share2 size={16} />
+                  </button>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      if (confirm(`Are you sure you want to delete "${b.name}"? All transactions assigned to it will return to Personal.`)) {
+                        await deleteBusiness(b.id);
+                      }
+                    }}
+                    style={{ background: 'none', border: 'none', color: '#ef4444', padding: 4, cursor: 'pointer' }}
+                    title="Delete Business"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+                {b.id === currentBusinessId && <Check size={16} />}
+              </button>
+            ))}
+            <button
+              onClick={() => setModal('add_business')}
+              style={{
+                ...S.menuItem, color: '#00C851', border: '1px dashed #00C851',
+                padding: '12px 16px', borderRadius: 12, marginTop: 10, justifyContent: 'center'
+              }}
+            >
+              <Plus size={18} style={{ marginRight: 8 }} />
+              <span>Add New Business</span>
+            </button>
+          </div>
+        </BottomSheet>
+      )}
+
+      {modal === 'add_business' && (
+        <BottomSheet title="Add Business" onClose={() => setModal('business_selector')}>
+          <div style={{ padding: '10px 0' }}>
+            <p style={{ fontSize: 13, color: '#64748b', marginBottom: 12 }}>Enter your business name to start tracking it separately.</p>
+            <input
+              autoFocus
+              value={newBizName}
+              onChange={e => setNewBizName(e.target.value)}
+              placeholder="e.g. My Shop, Consulting, etc."
+              style={S.searchInput}
+            />
+            <button
+              disabled={!newBizName.trim()}
+              onClick={async () => {
+                await createBusiness(newBizName);
+                setNewBizName('');
+                closeModal();
+              }}
+              className="pp-cta-pill-green"
+              style={{ opacity: newBizName.trim() ? 1 : 0.5 }}
+            >
+              Create Business
+            </button>
+          </div>
+        </BottomSheet>
+      )}
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800;900&display=swap');
@@ -1393,3 +1873,4 @@ const S = {
     padding: '10px 20px', borderRadius: 50, boxShadow: '0 4px 16px rgba(0,0,0,.3)',
   },
 } as const;
+

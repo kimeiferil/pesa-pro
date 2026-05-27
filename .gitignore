@@ -73,3 +73,5 @@ node_modules/
 *.keystore
 android/app/release/
 android/keystore.properties
+
+.env
