@@ -80,14 +80,31 @@ function parseAmount(raw: string): number | null {
 }
 
 function extractFirstAmount(text: string): number | null {
-  const m = text.match(/(?:K[Ss][Hh]|KES)\s?([\d,]+\.?\d*)/i);
-  return m ? parseAmount(m[1]) : null;
+  // Enhanced to handle more variations and Swahili "Ksh" or "Ksh."
+  // And ignore amounts following "balance" keywords
+  const balanceIdx = text.toLowerCase().indexOf('balance');
+  const searchPart = balanceIdx !== -1 ? text.substring(0, balanceIdx) : text;
+
+  const m = searchPart.match(/(?:K[Ss][Hh]|KES)\.?\s?([\d,]+\.?\d*)/i);
+  if (m) return parseAmount(m[1]);
+
+  // Fallback if balance wasn't found but amount is at the start (common in some formats)
+  const m2 = text.match(/(?:K[Ss][Hh]|KES)\.?\s?([\d,]+\.?\d*)/i);
+  return m2 ? parseAmount(m2[1]) : null;
 }
 
 // ─── Transaction ID ───────────────────────────────────────────────────────────
 export function extractTxnId(text: string): string | null {
-  const m = text.match(/\b([A-Z0-9]{10})\b/);
-  return m ? m[1] : null;
+  const matches = [...text.matchAll(/\b([A-Z0-9]{10})\b/g)];
+  for (const m of matches) {
+    const code = m[1];
+    // Exclude strings that are just 10 digits (likely phone numbers)
+    if (/^\d{10}$/.test(code)) continue;
+    // Exclude strings starting with 07 or 01 or 254 (likely phone numbers)
+    if (/^(07|01|254)/.test(code)) continue;
+    return code;
+  }
+  return null;
 }
 
 /** Extract ALL txn IDs from a blob (used for batch duplicate checks) */
@@ -128,15 +145,24 @@ function extractFees(text: string): number | null {
 interface TypeResult { type: TransactionType; confidence: number }
 
 function detectType(text: string): TypeResult {
+  // Swahili patterns
   if (/pochi\s+la\s+biashara/i.test(text))
     return { type: 'pochi',         confidence: 0.99 };
+  if (/umepokea/i.test(text) && /kutoka/i.test(text))
+    return { type: 'received',      confidence: 0.96 };
+  if (/umetuma/i.test(text) || /zilizotumwa/i.test(text))
+    return { type: 'send_money',    confidence: 0.95 };
+  if (/ulipia/i.test(text) && /paybill/i.test(text))
+    return { type: 'paybill',       confidence: 0.95 };
+
+  // English patterns
   if (/fuliza/i.test(text))
     return { type: 'fuliza',        confidence: 0.99 };
   if (/reversal/i.test(text))
     return { type: 'reversal',      confidence: 0.99 };
   if (/airtime|data\s+bundle/i.test(text))
     return { type: 'airtime',       confidence: 0.98 };
-  if (/you\s+have\s+received|money\s+you\s+have\s+received|received\s+from/i.test(text))
+  if (/you\s+have\s+received|money\s+you\s+have\s+received|received\s+from|confirmed\.\s+you\s+received|received\s+ksh/i.test(text))
     return { type: 'received',      confidence: 0.98 };
   if (/withdraw(?:al)?.*agent|agent.*cash\s+point|agent.*withdraw/i.test(text))
     return { type: 'withdrawal',    confidence: 0.97 };
@@ -150,7 +176,7 @@ function detectType(text: string): TypeResult {
     return { type: 'deposit',       confidence: 0.95 };
   if (/balance\s+inquiry|your\s+m-?pesa\s+balance\s+is/i.test(text))
     return { type: 'balance_check', confidence: 0.97 };
-  if (/sent\s+to|you\s+have\s+sent|send\s+money/i.test(text))
+  if (/sent\s+to|you\s+have\s+sent|send\s+money|confirmed\.\s+ksh.*sent\s+to|sent\s+ksh/i.test(text))
     return { type: 'send_money',    confidence: 0.94 };
 
   // Directional fallbacks
@@ -168,12 +194,16 @@ function extractName(text: string, type: TransactionType): string | null {
     patterns.push(
       /sent\s+to\s+([A-Z][A-Za-z\s]{2,40}?)\s+(?:\d{10,12}|on\s|\.|,)/i,
       /to\s+([A-Z][A-Z\s]{2,35}?)\s+(?:07|01|\d{10})/i,
+      /umetuma\s+ksh.*\s+kwa\s+([A-Z][A-Za-z\s]{2,40}?)\s+(?:\d{10,12}|mnamo)/i,
+      /kwa\s+([A-Z][A-Za-z\s]{2,40}?)\s+(?:\d{10,12}|mnamo)/i,
     );
   }
   if (type === 'received') {
     patterns.push(
       /from\s+([A-Z][A-Za-z\s]{2,40}?)\s+(?:\d{10,12}|on\s|\.|,)/i,
       /received\s+from\s+([A-Z][A-Za-z\s]{2,35}?)(?:\s+0[71]|\s+on|\.|,)/i,
+      /umepokea\s+ksh.*\s+kutoka\s+kwa\s+([A-Z][A-Za-z\s]{2,40}?)\s+(?:\d{10,12}|mnamo)/i,
+      /kutoka\s+kwa\s+([A-Z][A-Za-z\s]{2,40}?)\s+(?:\d{10,12}|mnamo)/i,
     );
   }
   if (type === 'paybill') {
@@ -188,7 +218,8 @@ function extractName(text: string, type: TransactionType): string | null {
 
   // Generic fallbacks
   patterns.push(
-    /(?:to|from)\s+([A-Z][A-Z\s]{2,35}?)(?:\s+07|\s+01|\s+Ksh|\s+on\s|\.|,)/i,
+    /(?:to|from|kwa|kutoka\s+kwa)\s+([A-Z][A-Z\s]{2,35}?)(?:\s+07|\s+01|\s+Ksh|\s+on\s|\.|,)/i,
+    /(?:to|from|kwa|kutoka\s+kwa)\s+([A-Z0-9][A-Z0-9\s&\-]{2,40}?)\s+(?:\d{10,12}|on\s|\.|,)/i,
     /([A-Z]{2,}(?:\s[A-Z]{2,}){1,3})\s+(?:07|01)/,
   );
 
@@ -226,7 +257,7 @@ function extractBusinessInfo(text: string): BizInfo {
 
 // ─── Main parser ──────────────────────────────────────────────────────────────
 export function parseMpesa(sms: string): ParsedTransaction {
-  const text = sms?.trim() ?? '';
+  const text = sms?.trim().replace(/\n/g, ' ') ?? ''; // Normalize newlines to spaces for easier regex
   const { type, confidence } = detectType(text);
   const { date, time } = extractDateTime(text);
   const biz   = extractBusinessInfo(text);

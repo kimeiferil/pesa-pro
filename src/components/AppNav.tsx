@@ -11,6 +11,8 @@ import {
   Wallet,
   ChevronRight,
   ShieldCheck,
+  Settings,
+  Lock,
 } from 'lucide-react';
 
 // ─── Nav items ────────────────────────────────────────────────────────────────
@@ -20,6 +22,8 @@ const NAV_ITEMS = [
   { to: '/campaigns',    label: 'Campaigns',    icon: Target,          accent: '#f59e0b' },
   { to: '/import',       label: 'Import SMS',   icon: ArrowDownToLine, accent: '#a78bfa' },
   { to: '/chama',        label: 'Chama',        icon: Users,           accent: '#34d399' },
+  { to: '/settings',     label: 'Settings',     icon: Settings,        accent: '#64748b' },
+  { to: '/mfa',          label: 'Security',     icon: Lock,            accent: '#f43f5e' },
 ];
 
 // ─── Token map ────────────────────────────────────────────────────────────────

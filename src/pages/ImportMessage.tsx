@@ -753,7 +753,14 @@ export default function ImportMessage() {
                         <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {r.name ?? 'Unknown'}
                         </p>
-                        <p style={{ margin: '2px 0 0', fontSize: 11, color: C.muted, fontFamily: 'monospace' }}>{r.transaction_code}</p>
+                        <p style={{ margin: '2px 0 0', fontSize: 11, color: C.muted, fontFamily: 'monospace' }}>
+                          {r.transaction_code}
+                          {r.status === 'error' && r.error && (
+                            <span style={{ color: C.red, marginLeft: 8, fontStyle: 'italic', fontFamily: 'sans-serif' }}>
+                              ({r.error})
+                            </span>
+                          )}
+                        </p>
                       </div>
                       <span style={{ fontSize: 14, fontWeight: 800, color: C.primary, flexShrink: 0 }}>
                         KES {r.amount?.toLocaleString() ?? 'â€”'}
