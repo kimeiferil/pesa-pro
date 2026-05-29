@@ -1,6 +1,10 @@
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Ensure the uuid_generate_v4 function is available
+-- In case the extension exists but the function wasn't properly installed
+SELECT uuid_generate_v4();
+
 -- 1. GROUPS TABLE
 CREATE TABLE IF NOT EXISTS groups (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
