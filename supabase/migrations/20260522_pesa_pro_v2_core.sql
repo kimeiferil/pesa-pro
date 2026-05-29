@@ -171,8 +171,8 @@ CREATE TABLE IF NOT EXISTS public.bill_participants (
 
 -- Enable RLS for all new tables
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.recurring_payments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.float_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.recurring_payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.float_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.merry_go_round ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.penalty_rules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chama_loans ENABLE ROW LEVEL SECURITY;
@@ -186,21 +186,138 @@ ALTER TABLE public.bill_splits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bill_participants ENABLE ROW LEVEL SECURITY;
 
 -- Policies (Scoped to auth.uid())
-CREATE POLICY "Anyone can view categories" ON public.categories FOR SELECT USING (true);
-CREATE POLICY "Users manage recurring" ON public.recurring_payments FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Users manage float" ON public.float_snapshots FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Users manage payday" ON public.payday_config FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Users manage assets" ON public.assets FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Users manage goals" ON public.savings_goals FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Users manage invoices" ON public.invoices FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Users manage lines" ON public.mpesa_lines FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Users manage reconciliations" ON public.agent_reconciliations FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Users manage splits" ON public.bill_splits FOR ALL USING (auth.uid() = user_id);
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'categories' AND n.nspname = 'public'
+  ) THEN
+    EXECUTE 'DROP POLICY IF EXISTS "Anyone can view categories" ON public.categories';
+    EXECUTE 'CREATE POLICY "Anyone can view categories" ON public.categories FOR SELECT USING (true)';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'recurring_payments' AND n.nspname = 'public'
+  ) THEN
+    EXECUTE 'DROP POLICY IF EXISTS "Users manage recurring" ON public.recurring_payments';
+    EXECUTE 'CREATE POLICY "Users manage recurring" ON public.recurring_payments FOR ALL USING (user_id::text = auth.uid()::text)';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'float_snapshots' AND n.nspname = 'public'
+  ) THEN
+    EXECUTE 'DROP POLICY IF EXISTS "Users manage float" ON public.float_snapshots';
+    EXECUTE 'CREATE POLICY "Users manage float" ON public.float_snapshots FOR ALL USING (user_id::text = auth.uid()::text)';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'payday_config' AND n.nspname = 'public'
+  ) THEN
+    EXECUTE 'DROP POLICY IF EXISTS "Users manage payday" ON public.payday_config';
+    EXECUTE 'CREATE POLICY "Users manage payday" ON public.payday_config FOR ALL USING (user_id::text = auth.uid()::text)';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'assets' AND n.nspname = 'public'
+  ) THEN
+    EXECUTE 'DROP POLICY IF EXISTS "Users manage assets" ON public.assets';
+    EXECUTE 'CREATE POLICY "Users manage assets" ON public.assets FOR ALL USING (user_id::text = auth.uid()::text)';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'savings_goals' AND n.nspname = 'public'
+  ) THEN
+    EXECUTE 'DROP POLICY IF EXISTS "Users manage goals" ON public.savings_goals';
+    EXECUTE 'CREATE POLICY "Users manage goals" ON public.savings_goals FOR ALL USING (user_id::text = auth.uid()::text)';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'invoices' AND n.nspname = 'public'
+  ) THEN
+    EXECUTE 'DROP POLICY IF EXISTS "Users manage invoices" ON public.invoices';
+    EXECUTE 'CREATE POLICY "Users manage invoices" ON public.invoices FOR ALL USING (user_id::text = auth.uid()::text)';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'mpesa_lines' AND n.nspname = 'public'
+  ) THEN
+    EXECUTE 'DROP POLICY IF EXISTS "Users manage lines" ON public.mpesa_lines';
+    EXECUTE 'CREATE POLICY "Users manage lines" ON public.mpesa_lines FOR ALL USING (user_id::text = auth.uid()::text)';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'agent_reconciliations' AND n.nspname = 'public'
+  ) THEN
+    EXECUTE 'DROP POLICY IF EXISTS "Users manage reconciliations" ON public.agent_reconciliations';
+    EXECUTE 'CREATE POLICY "Users manage reconciliations" ON public.agent_reconciliations FOR ALL USING (user_id::text = auth.uid()::text)';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'bill_splits' AND n.nspname = 'public'
+  ) THEN
+    EXECUTE 'DROP POLICY IF EXISTS "Users manage splits" ON public.bill_splits';
+    EXECUTE 'CREATE POLICY "Users manage splits" ON public.bill_splits FOR ALL USING (user_id::text = auth.uid()::text)';
+  END IF;
+END $$;
 
 -- Note: group-based policies are created earlier (immediately after related tables)
 
 -- Indexes for performance
-CREATE INDEX IF NOT EXISTS idx_transactions_category ON public.transactions(category_id);
-CREATE INDEX IF NOT EXISTS idx_recurring_next ON public.recurring_payments(next_expected_date);
-CREATE INDEX IF NOT EXISTS idx_debts_phone ON public.debts(contact_phone);
-CREATE INDEX IF NOT EXISTS idx_invoices_phone ON public.invoices(client_phone);
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'transactions' AND column_name = 'category_id'
+  ) THEN
+    CREATE INDEX IF NOT EXISTS idx_transactions_category ON public.transactions(category_id);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'recurring_payments' AND column_name = 'next_expected_date'
+  ) THEN
+    CREATE INDEX IF NOT EXISTS idx_recurring_next ON public.recurring_payments(next_expected_date);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'debts' AND column_name = 'contact_phone'
+  ) THEN
+    CREATE INDEX IF NOT EXISTS idx_debts_phone ON public.debts(contact_phone);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'invoices' AND column_name = 'client_phone'
+  ) THEN
+    CREATE INDEX IF NOT EXISTS idx_invoices_phone ON public.invoices(client_phone);
+  END IF;
+END $$;

@@ -92,6 +92,40 @@ CREATE TABLE IF NOT EXISTS campaigns (
 
 ALTER TABLE campaigns ENABLE ROW LEVEL SECURITY;
 
+-- Ensure expected columns exist on existing campaigns tables
+ALTER TABLE campaigns
+  ADD COLUMN IF NOT EXISTS category_id INTEGER REFERENCES campaign_categories(id),
+  ADD COLUMN IF NOT EXISTS category TEXT,
+  ADD COLUMN IF NOT EXISTS description TEXT,
+  ADD COLUMN IF NOT EXISTS target_amount NUMERIC(12,2) DEFAULT 0 CHECK (target_amount >= 0),
+  ADD COLUMN IF NOT EXISTS minimum_contribution NUMERIC(10,2) DEFAULT 100 CHECK (minimum_contribution >= 0),
+  ADD COLUMN IF NOT EXISTS current_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS paybill_number TEXT,
+  ADD COLUMN IF NOT EXISTS account_number TEXT,
+  ADD COLUMN IF NOT EXISTS till_number TEXT,
+  ADD COLUMN IF NOT EXISTS payment_details TEXT,
+  ADD COLUMN IF NOT EXISTS payment_instructions TEXT,
+  ADD COLUMN IF NOT EXISTS start_date DATE,
+  ADD COLUMN IF NOT EXISTS end_date DATE,
+  ADD COLUMN IF NOT EXISTS beneficiary_name TEXT,
+  ADD COLUMN IF NOT EXISTS beneficiary_contact TEXT,
+  ADD COLUMN IF NOT EXISTS beneficiary_image_url TEXT,
+  ADD COLUMN IF NOT EXISTS beneficiary_story TEXT,
+  ADD COLUMN IF NOT EXISTS cover_image_url TEXT,
+  ADD COLUMN IF NOT EXISTS support_documents TEXT[],
+  ADD COLUMN IF NOT EXISTS gallery_images TEXT[],
+  ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active' CHECK (status IN ('draft', 'active', 'completed', 'cancelled', 'paused')),
+  ADD COLUMN IF NOT EXISTS is_urgent BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS is_featured BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS share_count INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS view_count INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS created_by_name TEXT,
+  ADD COLUMN IF NOT EXISTS created_by_email TEXT,
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW(),
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW(),
+  ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+
 -- Optimized Indexes for campaigns
 CREATE INDEX IF NOT EXISTS idx_campaigns_status_created_at 
   ON campaigns(status, created_at DESC);
@@ -120,51 +154,50 @@ CREATE POLICY "Allow public insert campaigns" ON campaigns
   FOR INSERT WITH CHECK (auth.role() = 'anon' OR auth.role() = 'authenticated');
 
 CREATE POLICY "Allow campaign owners update campaigns" ON campaigns
-  FOR UPDATE USING (auth.uid() = created_by) WITH CHECK (auth.uid() = created_by);
+  FOR UPDATE USING (auth.uid()::text = created_by) WITH CHECK (auth.uid()::text = created_by);
 
 CREATE POLICY "Allow campaign owners delete campaigns" ON campaigns
-  FOR DELETE USING (auth.uid() = created_by);
+  FOR DELETE USING (auth.uid()::text = created_by);
 
 -- ============================================================
 -- 3. CAMPAIGN CONTRIBUTIONS TABLE
 -- ============================================================
-CREATE TABLE IF NOT EXISTS campaign_contributions (
-  id SERIAL PRIMARY KEY,
+DO $$
+DECLARE
+  cid_type TEXT;
+  create_type TEXT;
+BEGIN
+  SELECT data_type INTO cid_type
+  FROM information_schema.columns
+  WHERE table_name = 'campaigns' AND column_name = 'id';
 
-  -- Campaign reference
-  campaign_id UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-
-  -- Contribution details
-  amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
-  transaction_code TEXT UNIQUE,
-
-  -- Donor information
-  donor_name TEXT,
-  donor_phone TEXT,
-  donor_email TEXT,
-  donor_anonymous BOOLEAN DEFAULT false,
-
-  -- Payment information
-  payment_method TEXT DEFAULT 'M-Pesa',
-  payment_channel TEXT,
-  paybill_number TEXT,
-  account_number TEXT,
-
-  -- Contribution metadata
-  message TEXT,
-  is_first_contribution BOOLEAN DEFAULT false,
-
-  -- Status
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'failed', 'refunded')),
-
-  -- Timestamps
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  confirmed_at TIMESTAMPTZ,
-  refunded_at TIMESTAMPTZ,
-
-  -- Metadata
-  metadata JSONB DEFAULT '{}'::jsonb
-);
+  IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'campaign_contributions' AND relkind = 'r') THEN
+    create_type := CASE cid_type WHEN 'uuid' THEN 'UUID' ELSE 'INTEGER' END;
+    EXECUTE format($sql$
+      CREATE TABLE campaign_contributions (
+        id SERIAL PRIMARY KEY,
+        campaign_id %s NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+        amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+        transaction_code TEXT UNIQUE,
+        donor_name TEXT,
+        donor_phone TEXT,
+        donor_email TEXT,
+        donor_anonymous BOOLEAN DEFAULT false,
+        payment_method TEXT DEFAULT 'M-Pesa',
+        payment_channel TEXT,
+        paybill_number TEXT,
+        account_number TEXT,
+        message TEXT,
+        is_first_contribution BOOLEAN DEFAULT false,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (''pending'', ''confirmed'', ''failed'', ''refunded'')),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        confirmed_at TIMESTAMPTZ,
+        refunded_at TIMESTAMPTZ,
+        metadata JSONB DEFAULT '{}'::jsonb
+      );
+    $sql$, create_type);
+  END IF;
+END $$;
 
 -- Optimized Indexes for contributions
 CREATE INDEX IF NOT EXISTS idx_contributions_campaign_status_created 
@@ -182,16 +215,31 @@ CREATE INDEX IF NOT EXISTS idx_contributions_created_at
 -- ============================================================
 -- 4. CAMPAIGN UPDATES / PROGRESS POSTS
 -- ============================================================
-CREATE TABLE IF NOT EXISTS campaign_updates (
-  id SERIAL PRIMARY KEY,
-  campaign_id UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-  title TEXT NOT NULL,
-  content TEXT,
-  image_url TEXT,
-  milestone_amount NUMERIC(12,2),
-  created_by TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
+DO $$
+DECLARE
+  cid_type TEXT;
+  create_type TEXT;
+BEGIN
+  SELECT data_type INTO cid_type
+  FROM information_schema.columns
+  WHERE table_name = 'campaigns' AND column_name = 'id';
+
+  IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'campaign_updates' AND relkind = 'r') THEN
+    create_type := CASE cid_type WHEN 'uuid' THEN 'UUID' ELSE 'INTEGER' END;
+    EXECUTE format($sql$
+      CREATE TABLE campaign_updates (
+        id SERIAL PRIMARY KEY,
+        campaign_id %s NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        content TEXT,
+        image_url TEXT,
+        milestone_amount NUMERIC(12,2),
+        created_by TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    $sql$, create_type);
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_updates_campaign_created 
   ON campaign_updates(campaign_id, created_at DESC);
@@ -199,14 +247,29 @@ CREATE INDEX IF NOT EXISTS idx_updates_campaign_created
 -- ============================================================
 -- 5. CAMPAIGN SHARING / REFERRALS
 -- ============================================================
-CREATE TABLE IF NOT EXISTS campaign_shares (
-  id SERIAL PRIMARY KEY,
-  campaign_id UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-  shared_by TEXT,
-  shared_via TEXT CHECK (shared_via IN ('whatsapp', 'facebook', 'twitter', 'email', 'copy', 'instagram')),
-  share_url TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
+DO $$
+DECLARE
+  cid_type TEXT;
+  create_type TEXT;
+BEGIN
+  SELECT data_type INTO cid_type
+  FROM information_schema.columns
+  WHERE table_name = 'campaigns' AND column_name = 'id';
+
+  IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'campaign_shares' AND relkind = 'r') THEN
+    create_type := CASE cid_type WHEN 'uuid' THEN 'UUID' ELSE 'INTEGER' END;
+    EXECUTE format($sql$
+      CREATE TABLE campaign_shares (
+        id SERIAL PRIMARY KEY,
+        campaign_id %s NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+        shared_by TEXT,
+        shared_via TEXT CHECK (shared_via IN ('whatsapp', 'facebook', 'twitter', 'email', 'copy', 'instagram')),
+        share_url TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    $sql$, create_type);
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_shares_campaign_via 
   ON campaign_shares(campaign_id, shared_via);
@@ -214,7 +277,8 @@ CREATE INDEX IF NOT EXISTS idx_shares_campaign_via
 -- ============================================================
 -- 6. VIEW: CAMPAIGN SUMMARY (Source of Truth)
 -- ============================================================
-CREATE OR REPLACE VIEW campaign_summary AS
+DROP VIEW IF EXISTS campaign_summary CASCADE;
+CREATE VIEW campaign_summary AS
 SELECT 
   c.id,
   c.title,

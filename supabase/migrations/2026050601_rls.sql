@@ -4,53 +4,104 @@
 -- ============================================
 
 -- Create campaign_members table if not exists
-CREATE TABLE IF NOT EXISTS campaign_members (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    campaign_id UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-    role TEXT NOT NULL CHECK (role IN ('chair', 'treasurer', 'secretary', 'member')),
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(campaign_id, user_id)
-);
+DO $$
+DECLARE
+  cid_type TEXT;
+  create_type TEXT;
+BEGIN
+  SELECT data_type INTO cid_type
+  FROM information_schema.columns
+  WHERE table_name = 'campaigns' AND column_name = 'id';
+
+  IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'campaign_members' AND relkind = 'r') THEN
+    create_type := CASE cid_type WHEN 'uuid' THEN 'UUID' ELSE 'INTEGER' END;
+    EXECUTE format($sql$
+      CREATE TABLE campaign_members (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        campaign_id %s NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+        role TEXT NOT NULL CHECK (role IN ('chair', 'treasurer', 'secretary', 'member')),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(campaign_id, user_id)
+      );
+    $sql$, create_type);
+  END IF;
+END $$;
 
 -- Enable RLS on campaign_members
 ALTER TABLE campaign_members ENABLE ROW LEVEL SECURITY;
 
 -- Create expenses table if not exists
-CREATE TABLE IF NOT EXISTS expenses (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    campaign_id UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-    amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
-    description TEXT NOT NULL,
-    receipt_url TEXT, -- URL to stored receipt image (Supabase Storage)
-    submitted_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
-    expense_date DATE NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    metadata JSONB DEFAULT '{}'::jsonb
-);
+DO $$
+DECLARE
+  cid_type TEXT;
+  create_type TEXT;
+BEGIN
+  SELECT data_type INTO cid_type
+  FROM information_schema.columns
+  WHERE table_name = 'campaigns' AND column_name = 'id';
+
+  IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'expenses' AND relkind = 'r') THEN
+    create_type := CASE cid_type WHEN 'uuid' THEN 'UUID' ELSE 'INTEGER' END;
+    EXECUTE format($sql$
+      CREATE TABLE expenses (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        campaign_id %s NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+        amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+        description TEXT NOT NULL,
+        receipt_url TEXT,
+        submitted_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+        expense_date DATE NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        metadata JSONB DEFAULT '{}'::jsonb
+      );
+    $sql$, create_type);
+  END IF;
+END $$;
 
 -- Enable RLS on expenses
 ALTER TABLE expenses ENABLE ROW LEVEL SECURITY;
 
 -- Create approvals table if not exists
-CREATE TABLE IF NOT EXISTS approvals (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    transaction_id UUID REFERENCES campaign_contributions(id) ON DELETE SET NULL,
-    expense_id UUID REFERENCES expenses(id) ON DELETE SET NULL,
-    approver_uuid UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-    approver_name TEXT NOT NULL,
-    approver_phone TEXT NOT NULL,
-    device_id TEXT, -- Device identifier for fraud detection
-    gps_latitude DOUBLE PRECISION,
-    gps_longitude DOUBLE PRECISION,
-    sim_imsi TEXT, -- SIM card identifier for fraud detection
-    status TEXT NOT NULL CHECK (status IN ('approved', 'rejected', 'pending')),
-    approved_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    metadata JSONB DEFAULT '{}'::jsonb
-);
+DO $$
+DECLARE
+  transaction_type TEXT;
+  expense_type TEXT;
+BEGIN
+  SELECT data_type INTO transaction_type
+  FROM information_schema.columns
+  WHERE table_name = 'campaign_contributions' AND column_name = 'id';
+
+  SELECT data_type INTO expense_type
+  FROM information_schema.columns
+  WHERE table_name = 'expenses' AND column_name = 'id';
+
+  IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'approvals' AND relkind = 'r') THEN
+    EXECUTE format($sql$
+      CREATE TABLE approvals (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        transaction_id %s REFERENCES campaign_contributions(id) ON DELETE SET NULL,
+        expense_id %s REFERENCES expenses(id) ON DELETE SET NULL,
+        approver_uuid UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+        approver_name TEXT NOT NULL,
+        approver_phone TEXT NOT NULL,
+        device_id TEXT,
+        gps_latitude DOUBLE PRECISION,
+        gps_longitude DOUBLE PRECISION,
+        sim_imsi TEXT,
+        status TEXT NOT NULL CHECK (status IN ('approved', 'rejected', 'pending')),
+        approved_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        metadata JSONB DEFAULT '{}'::jsonb
+      );
+    $sql$,
+      CASE WHEN transaction_type = 'uuid' THEN 'UUID' ELSE 'INTEGER' END,
+      CASE WHEN expense_type = 'uuid' THEN 'UUID' ELSE 'INTEGER' END
+    );
+  END IF;
+END $$;
 
 -- Enable RLS on approvals
 ALTER TABLE approvals ENABLE ROW LEVEL SECURITY;
@@ -66,13 +117,13 @@ CREATE POLICY "Campaign creators can manage campaign members" ON campaign_member
         EXISTS (
             SELECT 1 FROM campaigns
             WHERE campaigns.id = campaign_members.campaign_id
-            AND campaigns.created_by = auth.uid()
+            AND campaigns.created_by::text = auth.uid()::text
         )
     );
 
 -- Allow members to see their own membership in campaigns
 CREATE POLICY "Users can see their own campaign memberships" ON campaign_members
-    FOR SELECT USING (user_id = auth.uid());
+    FOR SELECT USING (user_id::text = auth.uid()::text);
 
 -- POLICIES FOR CAMPAIGN_CONTRIBUTIONS (HARAMBEE TRANSACTIONS)
 -- Allow campaign members to see contributions for their campaigns
@@ -81,7 +132,7 @@ CREATE POLICY "Members can see campaign contributions" ON campaign_contributions
         EXISTS (
             SELECT 1 FROM campaign_members
             WHERE campaign_members.campaign_id = campaign_contributions.campaign_id
-            AND campaign_members.user_id = auth.uid()
+            AND campaign_members.user_id::text = auth.uid()::text
         )
     );
 
@@ -91,7 +142,7 @@ CREATE POLICY "Chairs and treasurers can insert campaign contributions" ON campa
         EXISTS (
             SELECT 1 FROM campaign_members
             WHERE campaign_members.campaign_id = campaign_contributions.campaign_id
-            AND campaign_members.user_id = auth.uid()
+            AND campaign_members.user_id::text = auth.uid()::text
             AND campaign_members.role IN ('chair', 'treasurer')
         )
     );
@@ -102,7 +153,7 @@ CREATE POLICY "Chairs and treasurers can update campaign contributions" ON campa
         EXISTS (
             SELECT 1 FROM campaign_members
             WHERE campaign_members.campaign_id = campaign_contributions.campaign_id
-            AND campaign_members.user_id = auth.uid()
+            AND campaign_members.user_id::text = auth.uid()::text
             AND campaign_members.role IN ('chair', 'treasurer')
         )
     );
@@ -114,7 +165,7 @@ CREATE POLICY "Members can see campaign expenses" ON expenses
         EXISTS (
             SELECT 1 FROM campaign_members
             WHERE campaign_members.campaign_id = expenses.campaign_id
-            AND campaign_members.user_id = auth.uid()
+            AND campaign_members.user_id::text = auth.uid()::text
         )
     );
 
@@ -124,7 +175,7 @@ CREATE POLICY "Chairs and treasurers can insert expenses" ON expenses
         EXISTS (
             SELECT 1 FROM campaign_members
             WHERE campaign_members.campaign_id = expenses.campaign_id
-            AND campaign_members.user_id = auth.uid()
+            AND campaign_members.user_id::text = auth.uid()::text
             AND campaign_members.role IN ('chair', 'treasurer')
         )
     );
@@ -135,7 +186,7 @@ CREATE POLICY "Chairs and treasurers can update expenses" ON expenses
         EXISTS (
             SELECT 1 FROM campaign_members
             WHERE campaign_members.campaign_id = expenses.campaign_id
-            AND campaign_members.user_id = auth.uid()
+            AND campaign_members.user_id::text = auth.uid()::text
             AND campaign_members.role IN ('chair', 'treasurer')
         )
     );
@@ -143,7 +194,7 @@ CREATE POLICY "Chairs and treasurers can update expenses" ON expenses
 -- POLICIES FOR APPROVALS
 -- Allow approvers to see their own approvals
 CREATE POLICY "Users can see their own approvals" ON approvals
-    FOR SELECT USING (approver_uuid = auth.uid());
+    FOR SELECT USING (approver_uuid::text = auth.uid()::text);
 
 -- Allow campaign chairs and treasurers to see all approvals for their campaigns
 CREATE POLICY "Chairs and treasurers can see campaign approvals" ON approvals
@@ -153,7 +204,7 @@ CREATE POLICY "Chairs and treasurers can see campaign approvals" ON approvals
             WHERE campaign_members.campaign_id = (
                 SELECT campaign_id FROM campaign_contributions WHERE id = approvals.transaction_id
             )
-            AND campaign_members.user_id = auth.uid()
+            AND campaign_members.user_id::text = auth.uid()::text
             AND campaign_members.role IN ('chair', 'treasurer')
         )
     );
@@ -166,15 +217,15 @@ CREATE POLICY "Chairs and treasurers can insert approvals" ON approvals
             WHERE campaign_members.campaign_id = (
                 SELECT campaign_id FROM campaign_contributions WHERE id = approvals.transaction_id
             )
-            AND campaign_members.user_id = auth.uid()
+            AND campaign_members.user_id::text = auth.uid()::text
             AND campaign_members.role IN ('chair', 'treasurer')
         )
     );
 
 -- Allow approvers to update their own approvals (e.g., change status)
 CREATE POLICY "Users can update their own approvals" ON approvals
-    FOR UPDATE USING (approver_uuid = auth.uid())
-    WITH CHECK (approver_uuid = auth.uid());
+    FOR UPDATE USING (approver_uuid::text = auth.uid()::text)
+    WITH CHECK (approver_uuid::text = auth.uid()::text);
 
 -- ============================================
 -- INDEXES FOR PERFORMANCE
